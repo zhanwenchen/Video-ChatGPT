@@ -510,7 +510,7 @@ def train():
     data_args.video_token_len = model_vision_dict['video_token_len']
     data_args.is_multimodal = True
 
-    model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
+    model.config.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
     if model_args.tune_mm_mlp_adapter:
         model.requires_grad_(False)
         for p in model.get_model().mm_projector.parameters():
@@ -522,7 +522,7 @@ def train():
             p.requires_grad = False
 
     model.config.mm_use_vid_start_end = data_args.mm_use_vid_start_end = model_args.mm_use_vid_start_end
-    vision_config.use_vid_start_end = training_args.use_vid_start_end = model_args.mm_use_vid_start_end
+    vision_config.use_vid_start_end = model_args.mm_use_vid_start_end
     model.config.sep_video_conv_front = data_args.sep_video_conv_front
     model.initialize_vision_tokenizer(mm_use_vid_start_end=model_args.mm_use_vid_start_end, tokenizer=tokenizer,
                                       device=training_args.device, tune_mm_mlp_adapter=model_args.tune_mm_mlp_adapter,
@@ -553,7 +553,6 @@ def train():
             FSDP.__init__ = patch_FSDP_use_orig_params(FSDP.__init__)
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
-    training_args.report_to = []
     # training_args.max_steps = 10
     trainer = VideoChatGPTTrainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
