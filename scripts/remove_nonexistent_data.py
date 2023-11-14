@@ -1,6 +1,7 @@
 from json import load as json_load, dump as json_dump
 from os.path import join as os_path_join, exists as os_path_exists
 from argparse import ArgumentParser
+from argparse import ArgumentParser
 from tqdm import tqdm
 
 
@@ -33,8 +34,7 @@ def main():
     nonexistent_features = []
     for qa_pair in tqdm(qa_json_train):
         video_feature_fname = qa_pair['vid_name']
-        video_feature_fpath = os_path_join(
-            video_features_dir, f'{video_feature_fname}.pkl')
+        video_feature_fpath = os_path_join(video_features_dir, f'{video_feature_fname}.pkl')
         if os_path_exists(video_feature_fpath):
             qa_json_train_removed.append(qa_pair)
         else:
@@ -48,8 +48,7 @@ def main():
 
     len_qa_json_train_removed = len(qa_json_train_removed)
     len_nonexistent_features = len(nonexistent_features)
-    print(
-        f'Train: Out of a total of {len_qa_json_train_removed+len_nonexistent_features} QA pairs, {len_nonexistent_features} are unavailable, leaving {len_qa_json_train_removed}.')
+    print(f'Train: Out of a total of {len_qa_json_train_removed+len_nonexistent_features} QA pairs, {len_nonexistent_features} are unavailable, leaving {len_qa_json_train_removed}.')
 
 
 if __name__ == '__main__':
