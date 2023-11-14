@@ -1,6 +1,17 @@
 from os import environ
-from os.path import expanduser as os_path_expanduser
+from os.path import expanduser as os_path_expanduser, basename as os_path_basename
 import numpy as np
+from torch import (
+    zeros as torch_zeros,
+    as_tensor as torch_as_tensor,
+    float16 as torch_float16,
+    float32 as torch_float32,
+    uint8 as torch_uint8,
+    device as torch_device,
+    load as torch_load,
+)
+from torch.nn.functional import interpolate as F_interpolate
+from PIL.Image import fromarray as Image_fromarray
 from torch import (
     zeros as torch_zeros,
     as_tensor as torch_as_tensor,
@@ -15,82 +26,38 @@ from PIL.Image import fromarray as Image_fromarray
 from transformers import AutoTokenizer, CLIPVisionModel, CLIPImageProcessor
 from decord import VideoReader, cpu, gpu
 from decord.bridge import set_bridge
+from accelerate import Accelerator
 from video_chatgpt.model import VideoChatGPTLlamaForCausalLM
-# from video_chatgpt.utils import disable_torch_init
+from video_chatgpt.utils import disable_torch_init
 from video_chatgpt.constants import DEFAULT_VIDEO_PATCH_TOKEN, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
-# set_bridge('torch')
-# environ['DECORD_EOF_RETRY_MAX'] = '20480'
 
 
-# def load_video(vis_path, device, num_frm=100):
-#     # with open(vis_path, 'rb') as file_in:
-#     vr = VideoReader(vis_path, ctx=cpu(), num_threads=0)
-#     total_frame_num = len(vr)
-#     total_num_frm = min(total_frame_num, num_frm)
-#     frame_idx = get_seq_frames(total_frame_num, total_num_frm)
-#     # img_array = vr.get_batch(frame_idx).asnumpy()  # (n_clips*num_frm, H, W, 3)
-#     print('load_video: before get_batch call')
-#     img_array = vr.get_batch(frame_idx) # (n_clips*num_frm, H, W, 3)
-#     print('load_video: after get_batch call')
-#     del vr
+set_bridge('torch')
+environ['DECORD_EOF_RETRY_MAX'] = '20480'
 
-#     h, w = 224, 224
-#     if img_array.shape[-3] != h or img_array.shape[-2] != w:
-#         img_array = torch_as_tensor(img_array, dtype=torch_float32, device=device).permute(0, 3, 1, 2)
-#         img_array = F_interpolate(img_array, size=(h, w))
-#         img_array = img_array.permute(0, 2, 3, 1).to(device='cpu', dtype=torch_uint8, non_blocking=True).numpy()
-#     img_array = img_array.reshape((1, total_num_frm, img_array.shape[-3], img_array.shape[-2], img_array.shape[-1]))
 
-#     clip_imgs = [Image_fromarray(img_array[0, j]) for j in range(total_num_frm)]
-#     return clip_imgs
-
-def load_video(vis_path, device, n_clips=1, num_frm=100):
-    """
-    Load video frames from a video file.
-
-    Parameters:
-    vis_path (str): Path to the video file.
-    n_clips (int): Number of clips to extract from the video. Defaults to 1.
-    num_frm (int): Number of frames to extract from each clip. Defaults to 100.
-
-    Returns:
-    list: List of PIL.Image.Image objects representing video frames.
-    """
-
-    # Load video with VideoReader
-    vr = VideoReader(vis_path, ctx=cpu())
+def load_video(vis_path, device, num_frm=100, n_clips=1):
+    vr = VideoReader(vis_path, ctx=cpu(), num_threads=0) # with 1, it's 6-8 hours
     total_frame_num = len(vr)
-
     # Currently, this function supports only 1 clip
     assert n_clips == 1
-
     # Calculate total number of frames to extract
     total_num_frm = min(total_frame_num, num_frm)
     # Get indices of frames to extract
     frame_idx = get_seq_frames(total_frame_num, total_num_frm)
     # Extract frames as numpy array
-    print(f'load_video: before get_batch call for vis_path={vis_path}')
-    try:
-        img_array = vr.get_batch(frame_idx).asnumpy()
-    except Exception as e:
-        print(f'Unable to get_batch from vis_path={vis_path} with frame_idx={frame_idx}')
-        raise e
-
-    print(f'load_video: after get_batch call for vis_path={vis_path}')
-    # Set target image height and width
-    target_h, target_w = 224, 224
+    img_array = vr.get_batch(frame_idx) # (n_clips*num_frm, H, W, 3)
+    del vr
+    h, w = 224, 224
     # If image shape is not as target, resize it
-    if img_array.shape[-3] != target_h or img_array.shape[-2] != target_w:
-        img_array = torch_as_tensor(img_array).permute(0, 3, 1, 2).float()
-        img_array = F_interpolate(img_array, size=(target_h, target_w))
-        img_array = img_array.permute(0, 2, 3, 1).to(torch_uint8).numpy()
-
-    # Reshape array to match number of clips and frames
+    if img_array.shape[-3] != h or img_array.shape[-2] != w:
+        img_array = torch_as_tensor(img_array, dtype=torch_float32, device=device).permute(0, 3, 1, 2)
+        img_array = F_interpolate(img_array, size=(h, w))
+        img_array = img_array.permute(0, 2, 3, 1).to(device='cpu', dtype=torch_uint8, non_blocking=True).numpy()
     img_array = img_array.reshape(
         (n_clips, total_num_frm, img_array.shape[-3], img_array.shape[-2], img_array.shape[-1]))
     # Convert numpy arrays to PIL Image objects
     clip_imgs = [Image_fromarray(img_array[0, j]) for j in range(total_num_frm)]
-
     return clip_imgs
 
 
@@ -131,7 +98,10 @@ def initialize_model(model_name, projection_path=None):
     """
 
     # Disable initial torch operations
-    # disable_torch_init()
+    disable_torch_init()
+
+    device_index = Accelerator().process_index
+    device_map = {"": device_index}
 
     device_map = 'cuda:0'
     # Convert model name to user path
