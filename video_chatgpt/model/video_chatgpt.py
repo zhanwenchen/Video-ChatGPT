@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Union
 import torch
+from torch import stack as torch_stack
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
@@ -10,6 +11,7 @@ DEFAULT_VIDEO_TOKEN = "<video>"
 DEFAULT_VIDEO_PATCH_TOKEN = "<vid_patch>"
 DEFAULT_VID_START_TOKEN = "<vid_start>"
 DEFAULT_VID_END_TOKEN = "<vid_end>"
+RATIO = 256/100
 
 
 class VisionConfig:
@@ -154,6 +156,17 @@ class VideoChatGPTLlamaModel(LlamaModel):
         )
 
 
+
+def get_zeroed_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
+    temporal_features = video_spatio_temporal_features[:, :100, :] # [N, 100, 1024]
+    spatial_features = video_spatio_temporal_features[:, 101:, :] # [N, 256, 1024]
+    temporal_features_t = temporal_features[: t, :] # [N, 1, 1024]
+    temporal_features[t].zero_()
+    spatial_features -= temporal_features_t * RATIO # Approximation
+    return torch_stack((temporal_features, temporal_features_t), dim=1)
+
+
+
 class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
     config_class = VideoChatGPTConfig
 
@@ -163,13 +176,15 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+        self.use_loo = config.use_loo
+
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_model(self):
         return self.model
 
-    def forward(
+    def forward_once(
             self,
             input_ids: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
@@ -188,17 +203,19 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        # input_ids: torch.Size([1, 510]), attention_mask: torch.Size([1, 510])
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
+            past_key_values=past_key_values, # None
+            inputs_embeds=inputs_embeds, # None
             use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            video_spatio_temporal_features=video_spatio_temporal_features
+            output_attentions=output_attentions, # False
+            output_hidden_states=output_hidden_states,  # False
+            return_dict=return_dict, # True
+            # torch.Size([1, 356, 1024]) # torch.Size([2, 356, 1024])
+            video_spatio_temporal_features=video_spatio_temporal_features,
         )
 
         hidden_states = outputs[0]
@@ -228,6 +245,91 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def forward(
+            self,
+            input_ids: torch.LongTensor = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            past_key_values: Optional[List[torch.FloatTensor]] = None,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            return_dict: Optional[bool] = None,
+    ):
+        if self.use_loo:
+            output_original = self.forward_once(
+                input_ids,
+                attention_mask,
+                past_key_values,
+                inputs_embeds,
+                labels,
+                use_cache,
+                output_attentions,
+                output_hidden_states,
+                video_spatio_temporal_features,
+                return_dict,
+            )
+            loss_original = output_original.loss
+            # losses = []
+            # outputs = []
+            delta_abs_biggest = 0
+            # TOOD: should we do no_grad here?
+            t_pred = []
+            for c in video_spatio_temporal_features.size(0):
+                for t in range(100): # TODO: access from config.
+                    # TODO: vectorize this so that the t is a vector.
+                    video_spatio_temporal_features_at_t = get_zeroed_video_spatio_temporal_features_at_t(video_spatio_temporal_features[c], t)
+                    output = self.forward_once(
+                        input_ids,
+                        attention_mask,
+                        past_key_values,
+                        inputs_embeds,
+                        labels,
+                        use_cache,
+                        output_attentions,
+                        output_hidden_states,
+                        video_spatio_temporal_features_at_t,
+                        return_dict,
+                    )
+                    delta = output.loss - loss_original  # supposed to be positive.
+                    if delta <= 0:
+                        warn(f'at t={t}')
+                    else:
+                        delta_abs = abs(delta)
+                        if delta_abs > delta_abs_biggest:
+                            delta_abs_biggest = delta_abs
+                            t_pred = t
+            output_original.loss = cross_entropy(t_pred, t_gt)
+            return output_original
+                # return CausalLMOutputWithPast(
+                #     loss=loss,
+                #     logits=logits,
+                #     past_key_values=outputs.past_key_values,
+                #     hidden_states=outputs.hidden_states,
+                #     attentions=outputs.attentions,
+                # )
+
+                # losses.append(output.loss)
+                # outputs.append(output)
+
+
+        else:
+            return self.forward_once(
+                input_ids,
+                attention_mask,
+                past_key_values,
+                inputs_embeds,
+                labels,
+                use_cache,
+                output_attentions,
+                output_hidden_states,
+                video_spatio_temporal_features,
+                return_dict,
+            )
+
 
     def prepare_inputs_for_generation(
             self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
