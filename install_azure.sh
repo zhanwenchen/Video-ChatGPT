@@ -422,3 +422,34 @@ python scripts/convert_instruction_json_to_training_format_tomloc.py \
 python scripts/convert_instruction_json_to_training_format_tomloc.py \
         --input_json_file data/siq2/tomloc/tomloc_train_removed_merged_n3_with_frames_idx.json \
         --output_json_file data/siq2/tomloc/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json
+
+# Training tomloc
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export NPROC_PER_NODE=$(echo ${CUDA_VISIBLE_DEVICES} | tr -cd , | wc -c); ((NUM_GPUS++))
+export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
+PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 video_chatgpt/train/train_mem.py \
+          --model_name_or_path ./LLaVA-Lightning-7B-v1-1 \
+          --version v1 \
+          --data_path data/tomloc/qa/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json \
+          --video_folder data/tomloc/clip_features_merged_n3 \
+          --tune_mm_mlp_adapter True \
+          --mm_use_vid_start_end \
+          --bf16 True \
+          --output_dir ./tomloc_checkpoints_1 \
+          --num_train_epochs 3 \
+          --per_device_train_batch_size 8 \
+          --per_device_eval_batch_size 8 \
+          --gradient_accumulation_steps 1 \
+          --evaluation_strategy "no" \
+          --save_strategy "steps" \
+          --save_steps 3000 \
+          --save_total_limit 3 \
+          --learning_rate 2e-5 \
+          --weight_decay 0. \
+          --warmup_ratio 0.03 \
+          --lr_scheduler_type "cosine" \
+          --logging_steps 100 \
+          --tf32 True \
+          --model_max_length 2048 \
+          --gradient_checkpointing True \
+          --lazy_preprocess True
