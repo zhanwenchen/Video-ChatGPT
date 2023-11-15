@@ -565,16 +565,15 @@ python scripts/process_gt_qa.py \
 
 # Make training and evaluation tomloc tasks.json
 python scripts/convert_instruction_json_to_training_format_tomloc.py \
-        --input_json_file data/siq2/tomloc/tomloc_val_removed_merged_n3_with_frames_idx.json \
-        --output_json_file data/siq2/tomloc/tomloc_val_removed_merged_n3_with_frames_idx_instruction.json
+        --input_json_file data/tomloc/qa/tomloc_val_removed_merged_n3_with_frames_idx.json \
+        --output_json_file data/tomloc/qa/tomloc_val_removed_merged_n3_with_frames_idx_instruction.json
 
 python scripts/convert_instruction_json_to_training_format_tomloc.py \
-        --input_json_file data/siq2/tomloc/tomloc_train_removed_merged_n3_with_frames_idx.json \
-        --output_json_file data/siq2/tomloc/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json
+        --input_json_file data/tomloc/qa/tomloc_train_removed_merged_n3_with_frames_idx.json \
+        --output_json_file data/tomloc/qa/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json
 
 # Training tomloc
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
-export NPROC_PER_NODE=$(echo ${CUDA_VISIBLE_DEVICES} | tr -cd , | wc -c); ((NUM_GPUS++))
+export NPROC_PER_NODE=4
 export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
 PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 video_chatgpt/train/train_mem.py \
           --model_name_or_path ./LLaVA-Lightning-7B-v1-1 \
@@ -602,84 +601,3 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --model_max_length 2048 \
           --gradient_checkpointing True \
           --lazy_preprocess True
-
-
-# Val
-# Make qa_val_instruction.json
-python scripts/convert_instruction_json_to_training_format_siq2.py \
-        --input_json_file data/siq2/qa/qa_val.json \
-        --output_json_file data/siq2/qa/qa_val_instruction.json
-
-
-export NPROC_PER_NODE=4
-export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
-PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_siq2_qa.py \
-    --model-name ${HOME}/vtom_checkpoints_1  \
-    --video_dir data/siq2/video \
-    --gt_file_qa data/siq2/qa/qa_val_instruction_removed.json \
-    --output_dir data/siq2/output \
-    --output_name video_chatgpt_siq2_qa_preds_val
-
-pip install "openai<1.0.0"
-
-PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_siq2_qa.py \
-    --pred_path data/siq2/output/video_chatgpt_siq2_qa_preds_val.json \
-    --output_dir data/siq2/output \
-    --output_json data/siq2/output/video_chatgpt_siq2_qa_results.json \
-    --api_key <my_api_key> \
-    --num_tasks 1
-
-
-# Test
-
-# Make qa_test_instruction.json
-# First, convert qa_test.json to valid JSON (add , to every line except for the last line. Then enclose everything in [])
-python scripts/convert_instruction_json_to_training_format_siq2.py \
-        --input_json_file data/siq2/qa/qa_test.json \
-        --output_json_file data/siq2/qa/qa_test_instruction.json
-
-# python scripts/remove_nonexistent_data.py
-
-export NPROC_PER_NODE=4
-export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
-PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_siq2_qa.py \
-    --model-name ${HOME}/vtom_checkpoints_1  \
-    --video_dir data/siq2/video \
-    --gt_file_qa data/siq2/qa/qa_test_instruction_removed.json \
-    --output_dir data/siq2/output \
-    --output_name video_chatgpt_siq2_qa_preds_test
-
-PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_siq2_qa.py \
-    --pred_path data/siq2/output/video_chatgpt_siq2_qa_preds_test.json \
-    --output_dir data/siq2/output \
-    --output_json data/siq2/output/video_chatgpt_siq2_qa_results_test.json \
-    --api_key <my_api_key> \
-    --num_tasks 1
-
-
-# New task: Create new task
-# 1. Create the merged qa_train and qa_test out of removed.
-# Train: Out of a total of 6159 QA pairs, 565 are unavailable, leaving 5594.
-python scripts/remove_nonexistent_data.py \
-    --qa_json_fpath_in data/siq2/qa/qa_train.json \
-    --qa_json_fpath_removed_out data/siq2/qa/qa_train_removed.json \
-    --qa_json_fpath_nonexistent_out data/siq2/qa/qa_train_nonexistent.json \
-    --video_features_dir data/siq2/video_features
-
-
-python data/siq2/create_tom_localization.py \
-    --qa_json_fpath_in data/siq2/qa/qa_train_removed.json \
-    --qa_json_fpath_out data/siq2/qa/qa_train_removed_merged_n3.json \
-    --n 3
-
-# Train: Out of a total of 943 QA pairs, 67 are unavailable, leaving 876.
-python scripts/remove_nonexistent_data.py \
-    --qa_json_fpath_in data/siq2/qa/qa_val.json \
-    --qa_json_fpath_removed_out data/siq2/qa/qa_val_removed.json \
-    --qa_json_fpath_nonexistent_out data/siq2/qa/qa_val_nonexistent.json \
-    --video_features_dir data/siq2/video_features
-
-python data/siq2/create_tom_localization.py \
-    --qa_json_fpath_in data/siq2/qa/qa_val_removed.json \
-    --qa_json_fpath_out data/siq2/qa/qa_val_removed_merged_n3.json \
-    --n 3
