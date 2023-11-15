@@ -28,7 +28,7 @@ def main():
         video_id = content['vid_name']
         question = content['q']
         frame_idx_center = (content['frame_idx_end'] - content['frame_idx_start']) // 2
-        answer = frame_idx_center
+        answer = str(frame_idx_center)
         prompt = f'{PROMPT_STRING}\n{question}\n'
 
 
