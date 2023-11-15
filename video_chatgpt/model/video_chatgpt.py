@@ -1,6 +1,9 @@
+from undecorated import undecorated
+from types import MethodType
+from warnings import warn
 from typing import List, Optional, Tuple, Union
 import torch
-from torch import stack as torch_stack
+from torch import stack as torch_stack, no_grad as torch_no_grad
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
@@ -154,17 +157,6 @@ class VideoChatGPTLlamaModel(LlamaModel):
             output_attentions=output_attentions, output_hidden_states=output_hidden_states,
             return_dict=return_dict
         )
-
-
-
-def get_zeroed_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
-    temporal_features = video_spatio_temporal_features[:, :100, :] # [N, 100, 1024]
-    spatial_features = video_spatio_temporal_features[:, 101:, :] # [N, 256, 1024]
-    temporal_features_t = temporal_features[: t, :] # [N, 1, 1024]
-    temporal_features[t].zero_()
-    spatial_features -= temporal_features_t * RATIO # Approximation
-    return torch_stack((temporal_features, temporal_features_t), dim=1)
-
 
 
 class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
@@ -400,6 +392,146 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
                         f"Current: {input_embeddings.shape}. Numer of new tokens: {num_new_tokens}.")
 
         vision_config.vid_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_VIDEO_PATCH_TOKEN])[0]
+
+
+def zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
+    # [N, 100, 1024]
+    temporal_features = video_spatio_temporal_features[0, :100, :]
+    # [N, 256, 1024]
+    spatial_features = video_spatio_temporal_features[0, 101:, :]
+    temporal_features_t = temporal_features[: t, :]  # [N, 1, 1024]
+    temporal_features[t].zero_()
+    spatial_features -= temporal_features_t * RATIO  # Approximation
+    return torch_stack((temporal_features, temporal_features_t), dim=1)
+
+
+class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
+    def __init__(self, config, sequence_bias_processors):
+        super().__init__(config)
+        # https://discuss.huggingface.co/t/how-to-output-loss-from-model-generate/16999/2?u=zhanwenchen
+        generate_with_grad = undecorated(model.generate)
+        self.generate_with_grad = MethodType(generate_with_grad, model)
+        self.sequence_bias_processors = sequence_bias_processors
+
+    @torch_no_grad()
+    def get_idx(
+            self,
+            input_ids: torch.LongTensor = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            past_key_values: Optional[List[torch.FloatTensor]] = None,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            return_dict: Optional[bool] = None,
+    ):
+        training = self.training
+        num_clips = video_spatio_temporal_features.size(0)
+        assert num_clips == 1
+        num_frames_per_clip = video_spatio_temporal_features.size(1)
+        forward = super().forward
+        # self.eval()
+        output = forward(
+            input_ids,
+            attention_mask,
+            past_key_values,
+            inputs_embeds,
+            labels,
+            use_cache,
+            output_attentions,
+            output_hidden_states,
+            video_spatio_temporal_features,
+            return_dict=False,
+        )
+        assert len(output) != 1
+        loss_original = biggest_loss = output[0]
+        frame_idx_to_remove_biggest = None
+        for frame_idx_to_remove in range(num_frames_per_clip):
+            video_spatio_temporal_features_zero_t = zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, frame_idx_to_remove)
+            output = forward(
+                input_ids,
+                attention_mask,
+                past_key_values,
+                inputs_embeds,
+                labels,
+                use_cache,
+                output_attentions,
+                output_hidden_states,
+                video_spatio_temporal_features_zero_t,
+                return_dict=False,
+            )
+            loss_zero_t = output[0]
+            if loss_zero_t > biggest_loss:
+                biggest_loss = loss_zero_t
+                frame_idx_to_remove_biggest = frame_idx_to_remove
+            else:
+                warn(f'At t={frame_idx_to_remove}, loss drops from loss_original={loss_original} to {loss_zero_t}')
+
+        # if training:
+        #     self.train()
+        # logits = map_frame_idx_to_logits(frame_idx_to_remove_biggest)# Change logits to match the frame idx's embedding.
+        # return forward(
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     past_key_values=past_key_values,
+        #     inputs_embeds=inputs_embeds,
+        #     labels=labels,
+        #     use_cache=use_cache,
+        #     output_attentions=output_attentions,
+        #     output_hidden_states=output_hidden_states,
+        #     return_dict=return_dict,
+        #     video_spatio_temporal_features=video_spatio_temporal_features,
+        # )
+        return frame_idx_to_remove_biggest
+
+
+    def forward(
+            self,
+            input_ids: torch.LongTensor = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            past_key_values: Optional[List[torch.FloatTensor]] = None,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            labels: Optional[torch.LongTensor] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            return_dict: Optional[bool] = None,
+    ):
+        frame_idx = self.get_idx(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            video_spatio_temporal_features=video_spatio_temporal_features,
+        )
+        sequence_bias = self.sequence_bias_processors[frame_idx]
+        # https://huggingface.co/docs/transformers/main/en/internal/generation_utils#transformers.SequenceBiasLogitsProcessor
+        output = self.generate_with_grad(
+            input_ids=input_ids,
+            output_scores=True,
+            return_dict_in_generate=True,
+            output_hidden_states=True,
+            num_beams=4,
+            sequence_bias=sequence_bias,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            video_spatio_temporal_features=video_spatio_temporal_features,
+            return_dict=return_dict,
+        )
+        return output
+
 
 
 AutoConfig.register("VideoChatGPT", VideoChatGPTConfig)
