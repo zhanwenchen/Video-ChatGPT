@@ -168,15 +168,13 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-        self.use_loo = config.use_loo
-
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_model(self):
         return self.model
 
-    def forward_once(
+    def forward(
             self,
             input_ids: torch.LongTensor = None,
             attention_mask: Optional[torch.Tensor] = None,
@@ -195,19 +193,17 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # input_ids: torch.Size([1, 510]), attention_mask: torch.Size([1, 510])
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            past_key_values=past_key_values, # None
-            inputs_embeds=inputs_embeds, # None
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions, # False
-            output_hidden_states=output_hidden_states,  # False
-            return_dict=return_dict, # True
-            # torch.Size([1, 356, 1024]) # torch.Size([2, 356, 1024])
-            video_spatio_temporal_features=video_spatio_temporal_features,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            video_spatio_temporal_features=video_spatio_temporal_features
         )
 
         hidden_states = outputs[0]
@@ -237,91 +233,6 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-    def forward(
-            self,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            inputs_embeds: Optional[torch.FloatTensor] = None,
-            labels: Optional[torch.LongTensor] = None,
-            use_cache: Optional[bool] = None,
-            output_attentions: Optional[bool] = None,
-            output_hidden_states: Optional[bool] = None,
-            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
-            return_dict: Optional[bool] = None,
-    ):
-        if self.use_loo:
-            output_original = self.forward_once(
-                input_ids,
-                attention_mask,
-                past_key_values,
-                inputs_embeds,
-                labels,
-                use_cache,
-                output_attentions,
-                output_hidden_states,
-                video_spatio_temporal_features,
-                return_dict,
-            )
-            loss_original = output_original.loss
-            # losses = []
-            # outputs = []
-            delta_abs_biggest = 0
-            # TOOD: should we do no_grad here?
-            t_pred = []
-            for c in video_spatio_temporal_features.size(0):
-                for t in range(100): # TODO: access from config.
-                    # TODO: vectorize this so that the t is a vector.
-                    video_spatio_temporal_features_at_t = get_zeroed_video_spatio_temporal_features_at_t(video_spatio_temporal_features[c], t)
-                    output = self.forward_once(
-                        input_ids,
-                        attention_mask,
-                        past_key_values,
-                        inputs_embeds,
-                        labels,
-                        use_cache,
-                        output_attentions,
-                        output_hidden_states,
-                        video_spatio_temporal_features_at_t,
-                        return_dict,
-                    )
-                    delta = output.loss - loss_original  # supposed to be positive.
-                    if delta <= 0:
-                        warn(f'at t={t}')
-                    else:
-                        delta_abs = abs(delta)
-                        if delta_abs > delta_abs_biggest:
-                            delta_abs_biggest = delta_abs
-                            t_pred = t
-            output_original.loss = cross_entropy(t_pred, t_gt)
-            return output_original
-                # return CausalLMOutputWithPast(
-                #     loss=loss,
-                #     logits=logits,
-                #     past_key_values=outputs.past_key_values,
-                #     hidden_states=outputs.hidden_states,
-                #     attentions=outputs.attentions,
-                # )
-
-                # losses.append(output.loss)
-                # outputs.append(output)
-
-
-        else:
-            return self.forward_once(
-                input_ids,
-                attention_mask,
-                past_key_values,
-                inputs_embeds,
-                labels,
-                use_cache,
-                output_attentions,
-                output_hidden_states,
-                video_spatio_temporal_features,
-                return_dict,
-            )
-
 
     def prepare_inputs_for_generation(
             self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
@@ -394,6 +305,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         vision_config.vid_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_VIDEO_PATCH_TOKEN])[0]
 
 
+
 def zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
     # [N, 100, 1024]
     temporal_features = video_spatio_temporal_features[0, :100, :]
@@ -409,8 +321,8 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
     def __init__(self, config, sequence_bias_processors):
         super().__init__(config)
         # https://discuss.huggingface.co/t/how-to-output-loss-from-model-generate/16999/2?u=zhanwenchen
-        generate_with_grad = undecorated(model.generate)
-        self.generate_with_grad = MethodType(generate_with_grad, model)
+        generate_with_grad = undecorated(self.generate)
+        self.generate_with_grad = MethodType(generate_with_grad, self)
         self.sequence_bias_processors = sequence_bias_processors
 
     @torch_no_grad()

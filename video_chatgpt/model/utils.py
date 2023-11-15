@@ -23,3 +23,14 @@ class KeywordsStoppingCriteria(StoppingCriteria):
                 if keyword in outputs:
                     return True
         return False
+
+
+def get_sequence_bias_processor(tokenizer, term: str, bias: float):
+    # Now let's control generation through a bias. Please note that the tokenizer is initialized differently!
+
+    def get_tokens_as_tuple(word):
+        return tuple(tokenizer([word], add_special_tokens=False).input_ids[0])
+
+    # If we add a negative bias without beam search, it may become "stuck" in a prefix without good continuations
+    sequence_bias = {get_tokens_as_tuple(term): bias}
+    return sequence_bias
