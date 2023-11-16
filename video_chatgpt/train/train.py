@@ -493,6 +493,7 @@ def train():
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
+        device_map=device_map,
     )
 
     if model_args.use_loo:
@@ -512,7 +513,7 @@ def train():
         model = VideoChatGPTLlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
-            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
         )
 
     model.config.use_cache = False
