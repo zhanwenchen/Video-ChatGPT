@@ -36,3 +36,6 @@ data/ActivityNet/Zero_Shot_QA/
 checkpoint-9000/
 LLaVA-Lightning-7B-v1-1/
 llama-7b/
+
+# wandb
+wandb/
