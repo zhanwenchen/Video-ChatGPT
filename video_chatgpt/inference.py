@@ -1,4 +1,12 @@
-import torch
+from torch import (
+    float16 as torch_float16,
+    mean as torch_mean,
+    zeros as torch_zeros,
+    cat as torch_cat,
+    no_grad as torch_no_grad,
+    as_tensor as torch_as_tensor,
+    inference_mode as torch_inference_mode,
+)
 from video_chatgpt.video_conversation import conv_templates, SeparatorStyle
 from video_chatgpt.model.utils import KeywordsStoppingCriteria
 
@@ -25,21 +33,21 @@ def get_spatio_temporal_features_torch(features):
     t, s, c = features.shape
 
     # Compute temporal tokens as the mean along the time axis
-    temporal_tokens = torch.mean(features, dim=1)
+    temporal_tokens = torch_mean(features, dim=1)
 
     # Padding size calculation
     padding_size = 100 - t
 
     # Pad temporal tokens if necessary
     if padding_size > 0:
-        padding = torch.zeros(padding_size, c, device=features.device)
-        temporal_tokens = torch.cat((temporal_tokens, padding), dim=0)
+        padding = torch_zeros(padding_size, c, device=features.device)
+        temporal_tokens = torch_cat((temporal_tokens, padding), dim=0)
 
     # Compute spatial tokens as the mean along the spatial axis
-    spatial_tokens = torch.mean(features, dim=0)
+    spatial_tokens = torch_mean(features, dim=0)
 
     # Concatenate temporal and spatial tokens and cast to half precision
-    concat_tokens = torch.cat([temporal_tokens, spatial_tokens], dim=0).half()
+    concat_tokens = torch_cat([temporal_tokens, spatial_tokens], dim=0).to(dtype=torch_float16, non_blocking=True)
 
     return concat_tokens
 
@@ -82,23 +90,23 @@ def video_chatgpt_infer(video_frames, question, conv_mode, model, vision_tower, 
     image_tensor = image_processor.preprocess(video_frames, return_tensors='pt')['pixel_values']
 
     # Move image tensor to GPU and reduce precision to half
-    image_tensor = image_tensor.half().cuda()
+    image_tensor = image_tensor.to(device='cuda', dtype=torch_float16, non_blocking=True)
 
     # Generate video spatio-temporal features
-    with torch.no_grad():
+    with torch_no_grad():
         image_forward_outs = vision_tower(image_tensor, output_hidden_states=True)
         frame_features = image_forward_outs.hidden_states[-2][:, 1:] # Use second to last layer as in LLaVA
     video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features)
 
     # Move inputs to GPU
-    input_ids = torch.as_tensor(inputs.input_ids).cuda()
+    input_ids = torch_as_tensor(inputs.input_ids, device='cuda')
 
     # Define stopping criteria for generation
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
     stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
 
     # Run model inference
-    with torch.inference_mode():
+    with torch_inference_mode():
         output_ids = model.generate(
             input_ids,
             video_spatio_temporal_features=video_spatio_temporal_features.unsqueeze(0),
