@@ -1,7 +1,7 @@
 from os import makedirs as os_makedirs
 from os.path import join as os_path_join, exists as os_path_exists
 from argparse import ArgumentParser
-import json
+from json import load as json_load, dump as json_dump
 from glob import glob
 from warnings import warn
 from tqdm import tqdm
@@ -42,7 +42,7 @@ def run_inference(args):
                                                                                         args.projection_path)
     # Load both ground truth file containing questions and answers
     with open(args.gt_file_qa) as file:
-        gt_qa = json.load(file)
+        gt_qa = json_load(file)
 
     # Create the output directory if it doesn't exist
     output_dir = args.output_dir
@@ -89,7 +89,7 @@ def run_inference(args):
 
     # Save the output list to a JSON file
     with open(os_path_join(output_dir, f"{args.output_name}.json"), 'w') as file:
-        json.dump(output_list, file)
+        json_dump(output_list, file)
 
 
 if __name__ == "__main__":
