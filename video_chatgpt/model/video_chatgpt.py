@@ -178,7 +178,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
 class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
     config_class = VideoChatGPTConfig
 
-    def __init__(self, config, bias: float):
+    def __init__(self, config, bias: float=None):
         super().__init__(config)
         self.model = VideoChatGPTLlamaModel(config)
 
@@ -347,7 +347,7 @@ def zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t: 
 
 
 class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
-    def __init__(self, config, sequence_bias_dicts: list, num_frames: int, bias: float):
+    def __init__(self, config, sequence_bias_dicts: list, num_frames: int, bias: float=None):
         super().__init__(config, bias)
         self.sequence_bias_sequence_ids = list(sequence_bias_dicts)
         self.num_frames = num_frames
