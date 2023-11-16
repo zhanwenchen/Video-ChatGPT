@@ -220,7 +220,7 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --video_folder data/clip_features_train \
           --tune_mm_mlp_adapter True \
           --mm_use_vid_start_end \
-          --bf16 True \
+          --bf16 False \
           --output_dir ./Video-ChatGPT_7B-1.1_Checkpoints \
           --num_train_epochs 3 \
           --per_device_train_batch_size 8 \
