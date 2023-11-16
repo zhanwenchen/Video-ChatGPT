@@ -603,4 +603,5 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --lazy_preprocess True \
           --use_loo True \
           --bias 100.0 \
-          --num_frames 100
+          --num_frames 100 \
+          --ddp_find_unused_parameters True
