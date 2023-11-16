@@ -3,7 +3,7 @@ from types import MethodType
 from warnings import warn
 from typing import List, Optional, Tuple, Union
 import torch
-from torch import stack as torch_stack, no_grad as torch_no_grad
+from torch import stack as torch_stack, no_grad as torch_no_grad, cat as torch_cat, equal as torch_equal
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
@@ -162,7 +162,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
 class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
     config_class = VideoChatGPTConfig
 
-    def __init__(self, config):
+    def __init__(self, config, sequence_bias_sequence_ids: list, bias: float):
         super(LlamaForCausalLM, self).__init__(config)
         self.model = VideoChatGPTLlamaModel(config)
 
@@ -170,6 +170,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
 
         # Initialize weights and apply final processing
         self.post_init()
+        self.bias = bias
 
     def get_model(self):
         return self.model
@@ -186,6 +187,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
             output_hidden_states: Optional[bool] = None,
             video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
             return_dict: Optional[bool] = None,
+            token_ids=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -207,12 +209,56 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        logits = self.lm_head(hidden_states) # torch.Size([1, 434, 32006])
+        if self.training and token_ids is not None:
+            # TODO: Should I do this for all sequences or just the last ones?
+            # preds = logits.argmax(dim=-1)
+            # logits_original = logits[:, -1, :]
+            num_tokens = len(token_ids)
+            # logits_old = logits.detach().clone()
+            bias = self.bias
+            for idx, token in enumerate(token_ids):
+                logits[:, -(num_tokens-idx)-1, token] += bias
+            # print(torch_equal(logits_old, logits))
+            # print(torch_equal(logits_old.argmax(-1), logits.argmax(-1)))
+            # breakpoint()
+            # logits_new = token_ids(preds, logits_original) # torch.Size([1, 32006])
+            # logits_new = token_ids(preds, logits[0, ...]) # torch.Size([1, 32006])
+            # torch_equal(logits_original, logits_new)
+            # torch_equal(logits[0], logits_new)
+            # breakpoint()
+            # logits[:, -1, :] = logits_new
+            # if not torch_equal(logits_original, logits_new):
+            #     print('logits_original != logits_new')
+            # sequence_ids = list(token_ids.sequence_bias.keys())[0]
+            # Check logits_original
+            # Check self.sequence_bias_sequence_ids
+            # Check labels.
+        #     # pre-process distribution
+        #     token_ids.prepared_bias_variables
+        #     token_ids.length_1_bias
+        #     next_token_logits = logits[:, -1, :]
+        #     sequence_bias = token_ids.sequence_bias
+        #     sequence_ids = list(sequence_bias.keys())[0]
+        #     next_token_logits[:, list(self.sequence_bias.keys())[0]]
+        #     next_token_logits_new = token_ids(input_ids, next_token_logits)
+        #     next_token_logits_new[:, list(sequence_bias.keys())[0]]
+        #     logits[:, -1, :] = token_ids(input_ids, logits[:, -1, :]) # torch.Size([1, 32006])
 
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
+            # breakpoint()
+            shift_logits = logits[..., :-1, :].contiguous() # torch.Size([1, 433, 32006])
+            # if token_ids is not None:
+            #     # TODO: Should I do this for all sequences or just the last ones?
+            #     # shift_logits_original = shift_logits
+            #     for i in range(shift_logits.size(1)):
+            #         shift_logits_original = shift_logits[:, i, :]
+            #         shift_logits_new = token_ids(input_ids, shift_logits_original)
+            #         shift_logits[:, i, :] = shift_logits_new
+            #         if not torch_equal(logits_original, logits_new):
+            #             print('logits_original != logits_new')
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
@@ -307,25 +353,32 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
 
 
 def zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
-    # [N, 100, 1024]
-    temporal_features = video_spatio_temporal_features[0, :100, :]
-    # [N, 256, 1024]
-    spatial_features = video_spatio_temporal_features[0, 101:, :]
-    temporal_features_t = temporal_features[: t, :]  # [N, 1, 1024]
-    temporal_features[t].zero_()
+    # [100, 1024]
+    video_spatio_temporal_features_clone = video_spatio_temporal_features.detach().clone()
+    temporal_features = video_spatio_temporal_features_clone[:, :100, :]
+    # [256, 1024]
+    spatial_features = video_spatio_temporal_features_clone[:, 100:, :]
+    temporal_features_t = temporal_features[:, t, :]  # [1024]
+    temporal_features[:, t, :].zero_()
     spatial_features -= temporal_features_t * RATIO  # Approximation
-    return torch_stack((temporal_features, temporal_features_t), dim=1)
+    return torch_cat((temporal_features, spatial_features), dim=1)
 
 
 class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
-    def __init__(self, config, sequence_bias_processors):
-        super().__init__(config)
+    def __init__(self, config, sequence_bias_dicts: list, num_frames: int, bias: float):
+        self.sequence_bias_sequence_ids = sequence_bias_sequence_ids = [sequence_id for sequence_id in sequence_bias_dicts]
+        super().__init__(config, sequence_bias_sequence_ids, bias)
         # https://discuss.huggingface.co/t/how-to-output-loss-from-model-generate/16999/2?u=zhanwenchen
-        generate_with_grad = undecorated(self.generate)
-        self.generate_with_grad = MethodType(generate_with_grad, self)
-        self.sequence_bias_processors = sequence_bias_processors
+        # generate_with_grad = undecorated(self.generate)
+        # self.generate_with_grad = MethodType(generate_with_grad, self)
+        # self.sequence_bias_dicts = sequence_bias_dicts
+        self.num_frames = num_frames
+        # sequence_bias_dict = self.sequence_bias_dicts[frame_idx]
+        # self.sequence_bias_processors = [SequenceBiasLogitsProcessor(sequence_bias=sequence_bias_dict) for sequence_bias_dict in sequence_bias_dicts]
+
 
     @torch_no_grad()
+    # @torch_autocast('cuda', enabled=True)
     def get_idx(
             self,
             input_ids: torch.LongTensor = None,
@@ -339,10 +392,11 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ):
-        training = self.training
+        # training = self.training
         num_clips = video_spatio_temporal_features.size(0)
+        # warn(f'num_clips={num_clips}, video_spatio_temporal_features.size()={video_spatio_temporal_features.size()}')
         assert num_clips == 1
-        num_frames_per_clip = video_spatio_temporal_features.size(1)
+        num_frames_per_clip = self.num_frames
         forward = super().forward
         # self.eval()
         output = forward(
@@ -375,12 +429,19 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
                 return_dict=False,
             )
             loss_zero_t = output[0]
+            # print(f't={frame_idx_to_remove} type(output)={type(output)}, loss_zero_t.size()={loss_zero_t.size()}, loss_zero_t={loss_zero_t}')
             if loss_zero_t > biggest_loss:
                 biggest_loss = loss_zero_t
                 frame_idx_to_remove_biggest = frame_idx_to_remove
-            else:
-                warn(f'At t={frame_idx_to_remove}, loss drops from loss_original={loss_original} to {loss_zero_t}')
-
+                # print(f'At t={frame_idx_to_remove}, loss increases from loss_original={loss_original} to {loss_zero_t}. The biggest loss is now biggest_loss={biggest_loss} at t={frame_idx_to_remove_biggest}')
+            # if loss_zero_t < loss_original:
+            #     print(f'At t={frame_idx_to_remove}, loss drops from loss_original={loss_original} to {loss_zero_t}')
+        # if frame_idx_to_remove_biggest:
+        #     print(f'At t={frame_idx_to_remove_biggest}, biggest loss increases from loss_original={loss_original} to {biggest_loss}')
+        # else:
+        #     print(f'No t drops loss from loss_original={loss_original}')
+        if frame_idx_to_remove_biggest is None:
+            print(f'No t drops loss from loss_original={loss_original}')
         # if training:
         #     self.train()
         # logits = map_frame_idx_to_logits(frame_idx_to_remove_biggest)# Change logits to match the frame idx's embedding.
@@ -399,6 +460,7 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
         return frame_idx_to_remove_biggest
 
 
+    # @torch_autocast('cuda', enabled=False)
     def forward(
             self,
             input_ids: torch.LongTensor = None,
@@ -424,23 +486,26 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             return_dict=return_dict,
             video_spatio_temporal_features=video_spatio_temporal_features,
         )
-        sequence_bias = self.sequence_bias_processors[frame_idx]
+        if frame_idx is not None:
+            token_ids = self.sequence_bias_sequence_ids[frame_idx]
+        else:
+            token_ids = None
         # https://huggingface.co/docs/transformers/main/en/internal/generation_utils#transformers.SequenceBiasLogitsProcessor
-        output = self.generate_with_grad(
+        # next_token_logits = outputs.logits[:, -1, :]
+
+        # # pre-process distribution
+        # next_token_scores = token_ids(input_ids, next_token_logits)
+
+        output = super().forward(
             input_ids=input_ids,
-            output_scores=True,
-            return_dict_in_generate=True,
-            output_hidden_states=True,
-            num_beams=4,
-            sequence_bias=sequence_bias,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             labels=labels,
             use_cache=use_cache,
-            output_attentions=output_attentions,
             video_spatio_temporal_features=video_spatio_temporal_features,
             return_dict=return_dict,
+            token_ids=token_ids,
         )
         return output
 
