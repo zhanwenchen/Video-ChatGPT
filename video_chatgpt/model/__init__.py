@@ -1,1 +1,1 @@
-from .video_chatgpt import VideoChatGPTLlamaForCausalLM, VideoChatGPTConfig
+from .video_chatgpt import VideoChatGPTLlamaForCausalLM, VideoChatGPTConfig, VideoChatGPTLlamaForCausalLMLoo

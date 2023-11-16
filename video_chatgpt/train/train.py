@@ -1,18 +1,23 @@
-import copy
+from copy import deepcopy
 from dataclasses import dataclass, field
-import json
+from json import load as json_load
 import logging
-import pathlib
 from typing import Dict, Optional, Sequence
-import pickle
-import torch
+from pickle import load as pickle_load
+from torch import (
+    Tensor as torch_Tensor,
+    tensor as torch_tensor,
+    stack as torch_stack,
+)
 import torch.distributed as dist
-import transformers
 from torch.utils.data import Dataset
-from video_chatgpt.train.llava_trainer import VideoChatGPTTrainer
+from torch.nn.utils.rnn import pad_sequence
+from transformers import Trainer, HfArgumentParser, TrainingArguments as HFTrainingArguments, PreTrainedModel, PreTrainedTokenizer, AutoTokenizer
+from accelerate import Accelerator
 from video_chatgpt import video_conversation as conversation_lib
-from video_chatgpt.model import VideoChatGPTLlamaForCausalLM
+from video_chatgpt.model import VideoChatGPTLlamaForCausalLM, VideoChatGPTLlamaForCausalLMLoo
 from video_chatgpt.constants import DEFAULT_VIDEO_TOKEN, DEFAULT_VIDEO_PATCH_TOKEN, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
+from video_chatgpt.model.utils import get_tokens_as_tuple
 
 
 IGNORE_INDEX = -100
@@ -30,6 +35,9 @@ class ModelArguments:
     tune_mm_mlp_adapter: bool = field(default=False)
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_use_vid_start_end: bool = field(default=False)
+    use_loo: bool = field(default=False)
+    bias: float = field(default=0.0)
+    num_frames: int = field(default=None)
 
 
 @dataclass
@@ -45,7 +53,7 @@ class DataArguments:
 
 
 @dataclass
-class TrainingArguments(transformers.TrainingArguments):
+class TrainingArguments(HFTrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
     remove_unused_columns: bool = field(default=False)
@@ -60,7 +68,7 @@ class TrainingArguments(transformers.TrainingArguments):
     )
 
 
-def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
+def safe_save_model_for_hf_trainer(trainer: Trainer,
                                    output_dir: str):
     """Collects the state dict and dump to disk."""
     dist.barrier()
@@ -70,8 +78,8 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
 
 def smart_tokenizer_and_embedding_resize(
         special_tokens_dict: Dict,
-        tokenizer: transformers.PreTrainedTokenizer,
-        model: transformers.PreTrainedModel,
+        tokenizer: PreTrainedTokenizer,
+        model: PreTrainedModel,
 ):
     """Resize tokenizer and embedding.
 
@@ -94,30 +102,32 @@ def smart_tokenizer_and_embedding_resize(
 
 
 def _tokenize_fn(strings: Sequence[str],
-                 tokenizer: transformers.PreTrainedTokenizer) -> Dict:
+                 tokenizer: PreTrainedTokenizer) -> Dict:
     """Tokenize a list of strings."""
+    model_max_length = tokenizer.model_max_length
     tokenized_list = [
         tokenizer(
             text,
             return_tensors="pt",
             padding="longest",
-            max_length=tokenizer.model_max_length,
+            max_length=model_max_length,
             truncation=True,
         ) for text in strings
     ]
     input_ids = labels = [
         tokenized.input_ids[0] for tokenized in tokenized_list
     ]
+    pad_token_id = tokenizer.pad_token_id
     input_ids_lens = labels_lens = [
-        tokenized.input_ids.ne(tokenizer.pad_token_id).sum().item()
+        tokenized.input_ids.ne(pad_token_id).sum().item()
         for tokenized in tokenized_list
     ]
-    return dict(
-        input_ids=input_ids,
-        labels=labels,
-        input_ids_lens=input_ids_lens,
-        labels_lens=labels_lens,
-    )
+    return {
+        'input_ids': input_ids,
+        'labels': labels,
+        'input_ids_lens': input_ids_lens,
+        'labels_lens': labels_lens,
+    }
 
 
 def _mask_targets(target, tokenized_lens, speakers):
@@ -136,12 +146,16 @@ def _add_speaker_and_signal(header, source, get_conversation=True):
     BEGIN_SIGNAL = "### "
     END_SIGNAL = "\n"
     conversation = header
+    roles = conversation_lib.default_conversation.roles
+    roles_0 = roles[0]
+    roles_1 = roles[1]
     for sentence in source:
         from_str = sentence["from"]
-        if from_str.lower() == "human":
-            from_str = conversation_lib.default_conversation.roles[0]
-        elif from_str.lower() == "gpt":
-            from_str = conversation_lib.default_conversation.roles[1]
+        from_str_lower = from_str.lower()
+        if from_str_lower == "human":
+            from_str = roles_0
+        elif from_str_lower == "gpt":
+            from_str = roles_1
         else:
             from_str = 'unknown'
         sentence["value"] = (BEGIN_SIGNAL + from_str + ": " +
@@ -179,7 +193,7 @@ def preprocess_multimodal(
 
 def preprocess_v1(
         sources,
-        tokenizer: transformers.PreTrainedTokenizer,
+        tokenizer: PreTrainedTokenizer,
 ) -> Dict:
     conv = conversation_lib.default_conversation.copy()
     roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
@@ -197,7 +211,6 @@ def preprocess_v1(
             assert role == conv.roles[j % 2], f"{i}"
             conv.append_message(role, sentence["value"])
         conversations.append(conv.get_prompt())
-
     # Tokenize conversations
     input_ids = tokenizer(
         conversations,
@@ -250,7 +263,7 @@ def preprocess_v1(
 
 def preprocess_mpt(
         sources,
-        tokenizer: transformers.PreTrainedTokenizer,
+        tokenizer: PreTrainedTokenizer,
 ) -> Dict:
     conv = conversation_lib.default_conversation.copy()
     roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
@@ -322,7 +335,7 @@ def preprocess_mpt(
 
 def preprocess(
         sources: Sequence[str],
-        tokenizer: transformers.PreTrainedTokenizer,
+        tokenizer: PreTrainedTokenizer,
 ) -> Dict:
     """
     Given a list of sources, each is a conversation list. This transform:
@@ -344,7 +357,7 @@ def preprocess(
     # tokenize conversations
     conversations_tokenized = _tokenize_fn(conversations, tokenizer)
     input_ids = conversations_tokenized["input_ids"]
-    targets = copy.deepcopy(input_ids)
+    targets = deepcopy(input_ids)
     for target, source in zip(targets, sources):
         tokenized_lens = _tokenize_fn([header] + [s["value"] for s in source],
                                       tokenizer)["input_ids_lens"]
@@ -358,11 +371,11 @@ class SupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
     def __init__(self, data_path: str,
-                 tokenizer: transformers.PreTrainedTokenizer):
-        super(SupervisedDataset, self).__init__()
+                 tokenizer: PreTrainedTokenizer):
+        super().__init__()
         logging.warning("Loading data...")
         with open(data_path, "r") as file_in:
-            list_data_dict = json.load(file_in)
+            list_data_dict = json_load(file_in)
 
         logging.warning("Formatting inputs...")
         sources = [example["conversations"] for example in list_data_dict]
@@ -374,20 +387,23 @@ class SupervisedDataset(Dataset):
     def __len__(self):
         return len(self.input_ids)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+    def __getitem__(self, i) -> Dict[str, torch_Tensor]:
+        return {
+            'input_ids': self.input_ids[i],
+            'labels': self.labels[i],
+        }
 
 
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
     def __init__(self, data_path: str,
-                 tokenizer: transformers.PreTrainedTokenizer,
+                 tokenizer: PreTrainedTokenizer,
                  multimodal_cfg: dict):
-        super(LazySupervisedDataset, self).__init__()
+        super().__init__()
         logging.warning("Loading data...")
         with open(data_path, "r") as file_in:
-            list_data_dict = json.load(file_in)
+            list_data_dict = json_load(file_in)
 
         logging.warning("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
@@ -397,7 +413,7 @@ class LazySupervisedDataset(Dataset):
     def __len__(self):
         return len(self.list_data_dict)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, i) -> Dict[str, torch_Tensor]:
         sources = self.list_data_dict[i]
         if isinstance(i, int):
             sources = [sources]
@@ -406,19 +422,21 @@ class LazySupervisedDataset(Dataset):
             video_file = self.list_data_dict[i]['video']
             video_folder = self.multimodal_cfg['video_folder']
             with open(f"{video_folder}/{video_file}", "rb") as f:
-                features = pickle.load(f)
+                features = pickle_load(f)
 
             cur_token_len = 356  # 100 temporal + 256 spatial, TODO: Hard Coding is not good
             sources = preprocess_multimodal(
-                copy.deepcopy([e["conversations"] for e in sources]),
+                deepcopy([e["conversations"] for e in sources]),
                 self.multimodal_cfg, cur_token_len)
 
         data_dict = preprocess(
             sources,
             self.tokenizer)
         if isinstance(i, int):
-            data_dict = dict(input_ids=data_dict["input_ids"][0],
-                             labels=data_dict["labels"][0])
+            data_dict = {
+                'input_ids': data_dict["input_ids"][0],
+                'labels': data_dict["labels"][0]
+            }
 
         # video exist in the data
         if 'video' in self.list_data_dict[i]:
@@ -428,38 +446,38 @@ class LazySupervisedDataset(Dataset):
 
 
 @dataclass
-class DataCollatorForSupervisedDataset(object):
+class DataCollatorForSupervisedDataset:
     """Collate examples for supervised fine-tuning."""
 
-    tokenizer: transformers.PreTrainedTokenizer
+    tokenizer: PreTrainedTokenizer
+    pad_token_id: int
 
-    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch_Tensor]:
+        pad_token_id = self.pad_token_id
         input_ids, labels = tuple([instance[key] for instance in instances]
                                   for key in ("input_ids", "labels"))
-        input_ids = torch.nn.utils.rnn.pad_sequence(
+        input_ids = pad_sequence(
             input_ids,
             batch_first=True,
-            padding_value=self.tokenizer.pad_token_id)
-        labels = torch.nn.utils.rnn.pad_sequence(labels,
-                                                 batch_first=True,
-                                                 padding_value=IGNORE_INDEX)
-        batch = dict(
-            input_ids=input_ids,
-            labels=labels,
-            attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
-        )
+            padding_value=pad_token_id)
+        labels = pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
+        batch = {
+            'input_ids': input_ids,
+            'labels': labels,
+            'attention_mask': input_ids.ne(pad_token_id),
+        }
 
         if 'video' in instances[0]:
-            features = [torch.tensor(instance['video']) for instance in instances]
+            features = [torch_tensor(instance['video']) for instance in instances]
             if all(x is not None and x.shape == features[0].shape for x in features):
-                batch['video_spatio_temporal_features'] = torch.stack(features)
+                batch['video_spatio_temporal_features'] = torch_stack(features)
             else:
                 batch['video_spatio_temporal_features'] = features
 
         return batch
 
 
-def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
+def make_supervised_data_module(tokenizer: PreTrainedTokenizer,
                                 data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     dataset_cls = (LazySupervisedDataset
@@ -473,34 +491,56 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
                                     video_folder=data_args.video_folder,
                                     frame_aspect_ratio=data_args.frame_aspect_ratio,
                                     use_vid_start_end=getattr(data_args, 'mm_use_vid_start_end', False)))
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
-    return dict(train_dataset=train_dataset,
-                eval_dataset=None,
-                data_collator=data_collator)
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer, pad_token_id=tokenizer.pad_token_id)
+    return {
+        'train_dataset': train_dataset,
+        'eval_dataset': None,
+        'data_collator': data_collator
+    }
 
 
 def train():
-    parser = transformers.HfArgumentParser(
+    parser = HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    model = VideoChatGPTLlamaForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
-        # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
-    )
-    model.config.use_cache = False
-
-    if model_args.freeze_backbone:
-        model.model.requires_grad_(False)
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
+    device_index = Accelerator().process_index
+    device_map = {"": device_index}
+    tokenizer = AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
+        device_map=device_map,
     )
+
+    if model_args.use_loo:
+        bias = model_args.bias
+        num_frames = model_args.num_frames
+        sequence_bias_dicts = [get_tokens_as_tuple(tokenizer, str(i)) for i in range(num_frames)]
+        model = VideoChatGPTLlamaForCausalLMLoo.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            sequence_bias_dicts=sequence_bias_dicts,
+            device_map=device_map,
+            num_frames=num_frames,
+            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            bias=bias,
+        )
+    else:
+        model = VideoChatGPTLlamaForCausalLM.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            device_map=device_map,
+            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+        )
+
+    model.config.use_cache = False
+
+    if model_args.freeze_backbone:
+        model.model.requires_grad_(False)
+
 
     conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1_1"]
 
@@ -556,12 +596,9 @@ def train():
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     # training_args.max_steps = 10
-    trainer = VideoChatGPTTrainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
+    trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
-        trainer.train(resume_from_checkpoint=True)
-    else:
-        trainer.train()
+    trainer.train()
     trainer.save_state()
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
 

@@ -23,3 +23,7 @@ class KeywordsStoppingCriteria(StoppingCriteria):
                 if keyword in outputs:
                     return True
         return False
+
+
+def get_tokens_as_tuple(tokenizer, word: str):
+    return tuple(tokenizer([word], add_special_tokens=False).input_ids[0])
