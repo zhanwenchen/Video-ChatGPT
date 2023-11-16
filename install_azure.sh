@@ -605,3 +605,25 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --bias 100.0 \
           --num_frames 100 \
           --ddp_find_unused_parameters True
+
+PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_tomloc_qa.py \
+    --model-name tomloc_checkpoints_1/checkpoint-400 \
+    --video_dir data/tomloc/video_merged_n3 \
+    --gt_file_qa data/tomloc/qa/tomloc_val_removed_merged_n3_with_frames_idx_instruction.json \
+    --output_dir data/tomloc/output \
+    --output_name video_chatgpt_tomloc_qa_preds_val
+
+PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py \
+    --pred_path data/tomloc/output/video_chatgpt_tomloc_qa_preds_val.json \
+    --output_dir data/tomloc/output \
+    --output_json data/tomloc/output/video_chatgpt_tomloc_qa_results_test.json \
+    --num_tasks 1
+
+# Baseline model (video_chatgpt on tomloc after finetuning)
+# completed_files: 878
+# incomplete_files: 0
+# All evaluation completed!
+# Yes count: 605
+# No count: 271
+# Accuracy: 0.6906392694063926
+# Average score: 0.6906392694063926
