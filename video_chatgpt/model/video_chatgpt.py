@@ -1,9 +1,6 @@
-from undecorated import undecorated
-from types import MethodType
-from warnings import warn
 from typing import List, Optional, Tuple, Union
 import torch
-from torch import stack as torch_stack, no_grad as torch_no_grad, cat as torch_cat, equal as torch_equal
+from torch import no_grad as torch_no_grad, cat as torch_cat
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
@@ -211,54 +208,15 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states) # torch.Size([1, 434, 32006])
         if self.training and token_ids is not None:
-            # TODO: Should I do this for all sequences or just the last ones?
-            # preds = logits.argmax(dim=-1)
-            # logits_original = logits[:, -1, :]
             num_tokens = len(token_ids)
-            # logits_old = logits.detach().clone()
             bias = self.bias
             for idx, token in enumerate(token_ids):
                 logits[:, -(num_tokens-idx)-1, token] += bias
-            # print(torch_equal(logits_old, logits))
-            # print(torch_equal(logits_old.argmax(-1), logits.argmax(-1)))
-            # breakpoint()
-            # logits_new = token_ids(preds, logits_original) # torch.Size([1, 32006])
-            # logits_new = token_ids(preds, logits[0, ...]) # torch.Size([1, 32006])
-            # torch_equal(logits_original, logits_new)
-            # torch_equal(logits[0], logits_new)
-            # breakpoint()
-            # logits[:, -1, :] = logits_new
-            # if not torch_equal(logits_original, logits_new):
-            #     print('logits_original != logits_new')
-            # sequence_ids = list(token_ids.sequence_bias.keys())[0]
-            # Check logits_original
-            # Check self.sequence_bias_sequence_ids
-            # Check labels.
-        #     # pre-process distribution
-        #     token_ids.prepared_bias_variables
-        #     token_ids.length_1_bias
-        #     next_token_logits = logits[:, -1, :]
-        #     sequence_bias = token_ids.sequence_bias
-        #     sequence_ids = list(sequence_bias.keys())[0]
-        #     next_token_logits[:, list(self.sequence_bias.keys())[0]]
-        #     next_token_logits_new = token_ids(input_ids, next_token_logits)
-        #     next_token_logits_new[:, list(sequence_bias.keys())[0]]
-        #     logits[:, -1, :] = token_ids(input_ids, logits[:, -1, :]) # torch.Size([1, 32006])
 
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
-            # breakpoint()
             shift_logits = logits[..., :-1, :].contiguous() # torch.Size([1, 433, 32006])
-            # if token_ids is not None:
-            #     # TODO: Should I do this for all sequences or just the last ones?
-            #     # shift_logits_original = shift_logits
-            #     for i in range(shift_logits.size(1)):
-            #         shift_logits_original = shift_logits[:, i, :]
-            #         shift_logits_new = token_ids(input_ids, shift_logits_original)
-            #         shift_logits[:, i, :] = shift_logits_new
-            #         if not torch_equal(logits_original, logits_new):
-            #             print('logits_original != logits_new')
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
@@ -351,7 +309,6 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         vision_config.vid_patch_token = tokenizer.convert_tokens_to_ids([DEFAULT_VIDEO_PATCH_TOKEN])[0]
 
 
-
 def zero_video_spatio_temporal_features_at_t(video_spatio_temporal_features, t):
     # [100, 1024]
     video_spatio_temporal_features_clone = video_spatio_temporal_features.detach().clone()
@@ -368,17 +325,10 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
     def __init__(self, config, sequence_bias_dicts: list, num_frames: int, bias: float):
         self.sequence_bias_sequence_ids = sequence_bias_sequence_ids = [sequence_id for sequence_id in sequence_bias_dicts]
         super().__init__(config, sequence_bias_sequence_ids, bias)
-        # https://discuss.huggingface.co/t/how-to-output-loss-from-model-generate/16999/2?u=zhanwenchen
-        # generate_with_grad = undecorated(self.generate)
-        # self.generate_with_grad = MethodType(generate_with_grad, self)
-        # self.sequence_bias_dicts = sequence_bias_dicts
         self.num_frames = num_frames
-        # sequence_bias_dict = self.sequence_bias_dicts[frame_idx]
-        # self.sequence_bias_processors = [SequenceBiasLogitsProcessor(sequence_bias=sequence_bias_dict) for sequence_bias_dict in sequence_bias_dicts]
 
 
     @torch_no_grad()
-    # @torch_autocast('cuda', enabled=True)
     def get_idx(
             self,
             input_ids: torch.LongTensor = None,
@@ -433,30 +383,8 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             if loss_zero_t > biggest_loss:
                 biggest_loss = loss_zero_t
                 frame_idx_to_remove_biggest = frame_idx_to_remove
-                # print(f'At t={frame_idx_to_remove}, loss increases from loss_original={loss_original} to {loss_zero_t}. The biggest loss is now biggest_loss={biggest_loss} at t={frame_idx_to_remove_biggest}')
-            # if loss_zero_t < loss_original:
-            #     print(f'At t={frame_idx_to_remove}, loss drops from loss_original={loss_original} to {loss_zero_t}')
-        # if frame_idx_to_remove_biggest:
-        #     print(f'At t={frame_idx_to_remove_biggest}, biggest loss increases from loss_original={loss_original} to {biggest_loss}')
-        # else:
-        #     print(f'No t drops loss from loss_original={loss_original}')
         if frame_idx_to_remove_biggest is None:
             print(f'No t drops loss from loss_original={loss_original}')
-        # if training:
-        #     self.train()
-        # logits = map_frame_idx_to_logits(frame_idx_to_remove_biggest)# Change logits to match the frame idx's embedding.
-        # return forward(
-        #     input_ids=input_ids,
-        #     attention_mask=attention_mask,
-        #     past_key_values=past_key_values,
-        #     inputs_embeds=inputs_embeds,
-        #     labels=labels,
-        #     use_cache=use_cache,
-        #     output_attentions=output_attentions,
-        #     output_hidden_states=output_hidden_states,
-        #     return_dict=return_dict,
-        #     video_spatio_temporal_features=video_spatio_temporal_features,
-        # )
         return frame_idx_to_remove_biggest
 
 
@@ -489,11 +417,6 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             token_ids = self.sequence_bias_sequence_ids[frame_idx]
         else:
             token_ids = None
-        # https://huggingface.co/docs/transformers/main/en/internal/generation_utils#transformers.SequenceBiasLogitsProcessor
-        # next_token_logits = outputs.logits[:, -1, :]
-
-        # # pre-process distribution
-        # next_token_scores = token_ids(input_ids, next_token_logits)
 
         output = super().forward(
             input_ids=input_ids,
@@ -507,7 +430,6 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             token_ids=token_ids,
         )
         return output
-
 
 
 AutoConfig.register("VideoChatGPT", VideoChatGPTConfig)
