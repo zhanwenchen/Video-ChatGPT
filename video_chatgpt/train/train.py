@@ -2,18 +2,18 @@ import copy
 from dataclasses import dataclass, field
 import json
 import logging
-import pathlib
 from typing import Dict, Optional, Sequence
 import pickle
 import torch
 import torch.distributed as dist
 import transformers
+from transformers import Trainer
 from torch.utils.data import Dataset
-from video_chatgpt.train.llava_trainer import VideoChatGPTTrainer
+from accelerate import Accelerator
 from video_chatgpt import video_conversation as conversation_lib
 from video_chatgpt.model import VideoChatGPTLlamaForCausalLM, VideoChatGPTLlamaForCausalLMLoo
 from video_chatgpt.constants import DEFAULT_VIDEO_TOKEN, DEFAULT_VIDEO_PATCH_TOKEN, DEFAULT_VID_START_TOKEN, DEFAULT_VID_END_TOKEN
-from video_chatgpt.model.utils import get_sequence_bias_processor
+from video_chatgpt.model.utils import get_tokens_as_tuple
 
 
 IGNORE_INDEX = -100
@@ -32,6 +32,8 @@ class ModelArguments:
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
     mm_use_vid_start_end: bool = field(default=False)
     use_loo: bool = field(default=False)
+    bias: float = field(default=0.0)
+    num_frames: int = field(default=None)
 
 
 @dataclass
@@ -199,7 +201,6 @@ def preprocess_v1(
             assert role == conv.roles[j % 2], f"{i}"
             conv.append_message(role, sentence["value"])
         conversations.append(conv.get_prompt())
-
     # Tokenize conversations
     input_ids = tokenizer(
         conversations,
@@ -487,6 +488,7 @@ def train():
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     device_index = Accelerator().process_index
+    device_map = {"": device_index}
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
@@ -498,22 +500,23 @@ def train():
 
     if model_args.use_loo:
         bias = model_args.bias
-        sequence_bias_processors = [get_sequence_bias_processor(tokenizer, str(i), bias) for i in range(100)]
-    else:
-        sequence_bias_processors = None
-
-    if model_args.use_loo:
+        num_frames = model_args.num_frames
+        sequence_bias_dicts = [get_tokens_as_tuple(tokenizer, str(i)) for i in range(num_frames)]
         model = VideoChatGPTLlamaForCausalLMLoo.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
-            sequence_bias_processors=sequence_bias_processors
+            sequence_bias_dicts=sequence_bias_dicts,
+            device_map=device_map,
+            num_frames=num_frames,
             # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            bias=bias,
         )
     else:
         model = VideoChatGPTLlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
-            torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            device_map=device_map,
+            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
         )
 
     model.config.use_cache = False
