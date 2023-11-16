@@ -1,8 +1,17 @@
 from typing import List, Optional, Tuple, Union
-import torch
-from torch import no_grad as torch_no_grad, cat as torch_cat
-import torch.nn as nn
-from torch.nn import CrossEntropyLoss
+from torch import (
+    no_grad as torch_no_grad,
+    cat as torch_cat,
+    stack as torch_stack,
+    where as torch_where,
+    zeros as torch_zeros,
+    arange as torch_arange,
+    load as torch_load,
+    Tensor as torch_Tensor,
+    LongTensor as torch_LongTensor,
+    FloatTensor as torch_FloatTensor
+)
+from torch.nn import Linear, CrossEntropyLoss
 from transformers import AutoConfig, AutoModelForCausalLM, LlamaConfig, LlamaModel, LlamaForCausalLM
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
@@ -39,7 +48,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
             self.vision_config = VisionConfig()
 
         if hasattr(config, "use_mm_proj"):
-            self.mm_projector = nn.Linear(config.mm_hidden_size, config.hidden_size)
+            self.mm_projector = Linear(config.mm_hidden_size, config.hidden_size)
 
     def initialize_vision_modules(self, pretrain_mm_mlp_adapter=None, tune_mm_mlp_adapter=False):
         vision_config = self.vision_config
@@ -49,10 +58,10 @@ class VideoChatGPTLlamaModel(LlamaModel):
         self.config.mm_hidden_size = vision_config.hidden_size
 
         if not hasattr(self, 'mm_projector'):
-            self.mm_projector = nn.Linear(vision_config.hidden_size, self.config.hidden_size)
+            self.mm_projector = Linear(vision_config.hidden_size, self.config.hidden_size)
 
         if pretrain_mm_mlp_adapter is not None:
-            mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
+            mm_projector_weights = torch_load(pretrain_mm_mlp_adapter, map_location='cpu')
             self.mm_projector.load_state_dict({k.split('.')[-1]: v for k, v in mm_projector_weights.items()})
 
         return dict(
@@ -62,14 +71,14 @@ class VideoChatGPTLlamaModel(LlamaModel):
 
     def forward(
             self,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            inputs_embeds: Optional[torch.FloatTensor] = None,
+            input_ids: torch_LongTensor = None,
+            attention_mask: Optional[torch_Tensor] = None,
+            past_key_values: Optional[List[torch_FloatTensor]] = None,
+            inputs_embeds: Optional[torch_FloatTensor] = None,
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
-            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            video_spatio_temporal_features: Optional[torch_FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         orig_embeds_params = getattr(self, 'orig_embeds_params', None)
@@ -84,7 +93,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
         if (input_ids.shape[1] != 1 or self.training) and video_spatio_temporal_features is not None:
 
             video_features = self.mm_projector(video_spatio_temporal_features)
-            dummy_video_features = torch.zeros(video_features.shape[1], 1024, device=inputs_embeds.device,
+            dummy_video_features = torch_zeros(video_features.shape[1], 1024, device=inputs_embeds.device,
                                                dtype=inputs_embeds.dtype)
             dummy_video_features = self.mm_projector(dummy_video_features)
 
@@ -101,14 +110,14 @@ class VideoChatGPTLlamaModel(LlamaModel):
                     if (cur_input_ids == self.vision_config.vid_start_token).sum() != (
                             cur_input_ids == self.vision_config.vid_end_token).sum():
                         raise ValueError("The number of video start tokens and video end tokens should be the same.")
-                    video_start_tokens = torch.where(cur_input_ids == self.vision_config.vid_start_token)[0]
+                    video_start_tokens = torch_where(cur_input_ids == self.vision_config.vid_start_token)[0]
                     for video_start_token_pos in video_start_tokens:
                         cur_video_features = video_features[cur_video_idx].to(device=cur_input_embeds.device)
                         num_patches = cur_video_features.shape[0]
                         if cur_input_ids[video_start_token_pos + num_patches + 1] != self.vision_config.vid_end_token:
                             raise ValueError("The video end token should follow the video start token.")
                         if orig_embeds_params is not None:
-                            cur_new_input_embeds = torch.cat((cur_input_embeds[:video_start_token_pos].detach(),
+                            cur_new_input_embeds = torch_cat((cur_input_embeds[:video_start_token_pos].detach(),
                                                               cur_input_embeds[
                                                               video_start_token_pos:video_start_token_pos + 1],
                                                               cur_video_features, cur_input_embeds[
@@ -119,7 +128,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
                                                               video_start_token_pos + num_patches + 2:].detach()),
                                                              dim=0)
                         else:
-                            cur_new_input_embeds = torch.cat((cur_input_embeds[:video_start_token_pos + 1],
+                            cur_new_input_embeds = torch_cat((cur_input_embeds[:video_start_token_pos + 1],
                                                               cur_video_features,
                                                               cur_input_embeds[video_start_token_pos
                                                                                + num_patches + 1:]), dim=0)
@@ -131,22 +140,22 @@ class VideoChatGPTLlamaModel(LlamaModel):
                     if (cur_input_ids == self.vision_config.vid_patch_token).sum() != num_patches:
                         raise ValueError(
                             "The number of video patch tokens should be the same as the number of video patches.")
-                    masked_indices = torch.where(cur_input_ids == self.vision_config.vid_patch_token)[0]
+                    masked_indices = torch_where(cur_input_ids == self.vision_config.vid_patch_token)[0]
                     mask_index_start = masked_indices[0]
-                    if (masked_indices != torch.arange(mask_index_start, mask_index_start + num_patches,
+                    if (masked_indices != torch_arange(mask_index_start, mask_index_start + num_patches,
                                                        device=masked_indices.device, dtype=masked_indices.dtype)).any():
                         raise ValueError("The video patch tokens should be consecutive.")
                     if orig_embeds_params is not None:
-                        cur_new_input_embeds = torch.cat((cur_input_embeds[:mask_index_start].detach(),
+                        cur_new_input_embeds = torch_cat((cur_input_embeds[:mask_index_start].detach(),
                                                           cur_video_features,
                                                           cur_input_embeds[mask_index_start + num_patches:].detach()),
                                                          dim=0)
                     else:
-                        cur_new_input_embeds = torch.cat((cur_input_embeds[:mask_index_start], cur_video_features,
+                        cur_new_input_embeds = torch_cat((cur_input_embeds[:mask_index_start], cur_video_features,
                                                           cur_input_embeds[mask_index_start + num_patches:]), dim=0)
                     new_input_embeds.append(cur_new_input_embeds)
                     cur_video_idx += 1
-            inputs_embeds = torch.stack(new_input_embeds, dim=0)
+            inputs_embeds = torch_stack(new_input_embeds, dim=0)
 
         return super(VideoChatGPTLlamaModel, self).forward(
             input_ids=None, attention_mask=attention_mask, past_key_values=past_key_values,
@@ -163,7 +172,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
         super(LlamaForCausalLM, self).__init__(config)
         self.model = VideoChatGPTLlamaModel(config)
 
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -174,15 +183,15 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
 
     def forward(
             self,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            inputs_embeds: Optional[torch.FloatTensor] = None,
-            labels: Optional[torch.LongTensor] = None,
+            input_ids: torch_LongTensor = None,
+            attention_mask: Optional[torch_Tensor] = None,
+            past_key_values: Optional[List[torch_FloatTensor]] = None,
+            inputs_embeds: Optional[torch_FloatTensor] = None,
+            labels: Optional[torch_LongTensor] = None,
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
-            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            video_spatio_temporal_features: Optional[torch_FloatTensor] = None,
             return_dict: Optional[bool] = None,
             token_ids=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -294,7 +303,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
                     p.requires_grad = False
 
             if pretrain_mm_mlp_adapter:
-                mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
+                mm_projector_weights = torch_load(pretrain_mm_mlp_adapter, map_location='cpu')
                 embed_tokens_weight = mm_projector_weights['model.embed_tokens.weight']
                 assert num_new_tokens == 2
                 if input_embeddings.shape == embed_tokens_weight.shape:
@@ -331,15 +340,15 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
     @torch_no_grad()
     def get_idx(
             self,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            inputs_embeds: Optional[torch.FloatTensor] = None,
-            labels: Optional[torch.LongTensor] = None,
+            input_ids: torch_LongTensor = None,
+            attention_mask: Optional[torch_Tensor] = None,
+            past_key_values: Optional[List[torch_FloatTensor]] = None,
+            inputs_embeds: Optional[torch_FloatTensor] = None,
+            labels: Optional[torch_LongTensor] = None,
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
-            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            video_spatio_temporal_features: Optional[torch_FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ):
         # training = self.training
@@ -390,15 +399,15 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
 
     def forward(
             self,
-            input_ids: torch.LongTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            past_key_values: Optional[List[torch.FloatTensor]] = None,
-            inputs_embeds: Optional[torch.FloatTensor] = None,
-            labels: Optional[torch.LongTensor] = None,
+            input_ids: torch_LongTensor = None,
+            attention_mask: Optional[torch_Tensor] = None,
+            past_key_values: Optional[List[torch_FloatTensor]] = None,
+            inputs_embeds: Optional[torch_FloatTensor] = None,
+            labels: Optional[torch_LongTensor] = None,
             use_cache: Optional[bool] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
-            video_spatio_temporal_features: Optional[torch.FloatTensor] = None,
+            video_spatio_temporal_features: Optional[torch_FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ):
         frame_idx = self.get_idx(
