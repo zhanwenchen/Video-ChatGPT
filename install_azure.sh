@@ -582,7 +582,7 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --video_folder data/tomloc/clip_features_merged_n3 \
           --tune_mm_mlp_adapter True \
           --mm_use_vid_start_end \
-          --bf16 False \
+          --bf16 True \
           --output_dir ./tomloc_checkpoints_1_loo \
           --num_train_epochs 3 \
           --per_device_train_batch_size 1 \
