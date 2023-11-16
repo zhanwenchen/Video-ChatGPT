@@ -42,7 +42,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
     config_class = VideoChatGPTConfig
 
     def __init__(self, config: LlamaConfig, mm_vision_tower=None, mm_hidden_size=None):  # TODO: Remove unused params
-        super(VideoChatGPTLlamaModel, self).__init__(config)
+        super().__init__(config)
 
         if hasattr(config, "mm_vision_tower"):
             self.vision_config = VisionConfig()
@@ -82,10 +82,6 @@ class VideoChatGPTLlamaModel(LlamaModel):
             return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         orig_embeds_params = getattr(self, 'orig_embeds_params', None)
-        # if orig_embeds_params is not None:
-        #     orig_embeds_params = orig_embeds_params[0]
-        #     with torch.no_grad():
-        #         self.get_input_embeddings().weight.data[:-2] = orig_embeds_params[:-2].data
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -157,7 +153,7 @@ class VideoChatGPTLlamaModel(LlamaModel):
                     cur_video_idx += 1
             inputs_embeds = torch_stack(new_input_embeds, dim=0)
 
-        return super(VideoChatGPTLlamaModel, self).forward(
+        return super().forward(
             input_ids=None, attention_mask=attention_mask, past_key_values=past_key_values,
             inputs_embeds=inputs_embeds, use_cache=use_cache,
             output_attentions=output_attentions, output_hidden_states=output_hidden_states,
@@ -169,7 +165,7 @@ class VideoChatGPTLlamaForCausalLM(LlamaForCausalLM):
     config_class = VideoChatGPTConfig
 
     def __init__(self, config, sequence_bias_sequence_ids: list, bias: float):
-        super(LlamaForCausalLM, self).__init__(config)
+        super().__init__(config)
         self.model = VideoChatGPTLlamaModel(config)
 
         self.lm_head = Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -351,13 +347,10 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
             video_spatio_temporal_features: Optional[torch_FloatTensor] = None,
             return_dict: Optional[bool] = None,
     ):
-        # training = self.training
         num_clips = video_spatio_temporal_features.size(0)
-        # warn(f'num_clips={num_clips}, video_spatio_temporal_features.size()={video_spatio_temporal_features.size()}')
         assert num_clips == 1
         num_frames_per_clip = self.num_frames
         forward = super().forward
-        # self.eval()
         output = forward(
             input_ids,
             attention_mask,
@@ -388,7 +381,6 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
                 return_dict=False,
             )
             loss_zero_t = output[0]
-            # print(f't={frame_idx_to_remove} type(output)={type(output)}, loss_zero_t.size()={loss_zero_t.size()}, loss_zero_t={loss_zero_t}')
             if loss_zero_t > biggest_loss:
                 biggest_loss = loss_zero_t
                 frame_idx_to_remove_biggest = frame_idx_to_remove
