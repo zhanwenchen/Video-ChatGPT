@@ -103,7 +103,6 @@ def initialize_model(model_name, projection_path=None):
     device_index = Accelerator().process_index
     device_map = {"": device_index}
 
-    device_map = 'auto'
     # Convert model name to user path
     model_name = os_path_expanduser(model_name)
 
