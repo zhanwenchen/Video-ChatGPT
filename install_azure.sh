@@ -602,5 +602,5 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --gradient_checkpointing True \
           --lazy_preprocess True \
           --use_loo True \
-          --bias 10.0 \
+          --bias 100.0 \
           --num_frames 100
