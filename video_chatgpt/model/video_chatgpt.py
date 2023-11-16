@@ -460,7 +460,6 @@ class VideoChatGPTLlamaForCausalLMLoo(VideoChatGPTLlamaForCausalLM):
         return frame_idx_to_remove_biggest
 
 
-    # @torch_autocast('cuda', enabled=False)
     def forward(
             self,
             input_ids: torch.LongTensor = None,
