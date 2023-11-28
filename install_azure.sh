@@ -636,7 +636,7 @@ PYTHONPATH="./:$PYTHONPATH" python scripts/split_train_eval_loo.py \
 export NPROC_PER_NODE=4 # 1 For debugging
 export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
 PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 video_chatgpt/train/train_mem.py \
-          --model_name_or_path tomloc_checkpoints_1/checkpoint-400 \
+          --model_name_or_path ./Video-ChatGPT_7B-1.1_Checkpoints_old/ \
           --version v1 \
           --data_path data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
           --video_folder data/tomloc/clip_features_merged_n3 \
