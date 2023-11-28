@@ -6,8 +6,8 @@ python scripts/split_train_eval_loo.py \
     --qas_eval_loo_fpath data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json
 '''
 from json import load as json_load, dump as json_dump
-from collections import defaultdict
 from argparse import ArgumentParser
+from scripts.create_tom_localization_qa import get_unique_videos
 
 
 def parse_args():
@@ -18,23 +18,16 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_unique_ts(qas):
-    qas_by_video = defaultdict(set)
-    for qa in qas:
-        qas_by_video[qa['vid_name']].add(qa['ts'])
-    return qas_by_video
-
-
 def split_train_eval_loo(json):
     with open(json, 'r') as f:
         data = json_load(f)
-    qas_by_video = get_unique_ts(data)
+    qas_by_video = get_unique_videos(data, vid_column_name='id')
     qas_train = []
     qas_eval_loo = []
     for video, qas in qas_by_video.items():
         qas_train_vid, qas_eval_vid = qas[:-1], qas[-1]
-        qas_train.append(qas_train_vid)
-        qas_eval_loo.append(qas_eval_vid)
+        qas_train.extend(qas_train_vid)
+        qas_eval_loo.extend(qas_eval_vid)
     return qas_train, qas_eval_loo
 
 
