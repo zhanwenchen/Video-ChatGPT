@@ -627,3 +627,13 @@ PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py
 # No count: 271
 # Accuracy: 0.6906392694063926
 # Average score: 0.6906392694063926
+
+python scripts/split_train_eval_loo.py \
+    --input_json_file data/tomloc/qa/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json \
+    --qas_train_loo_fpath data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
+    --qas_eval_loo_fpath data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json
+
+
+python loo.py \
+    --qas_train_loo data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
+    --qas_eval_loo data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json
