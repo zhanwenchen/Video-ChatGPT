@@ -666,6 +666,7 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --ddp_find_unused_parameters True
 
 
-python loo.py \
-    --qas_train_loo data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
-    --qas_eval_loo data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json
+# Start loo
+export NPROC_PER_NODE=1 # 1 For debugging
+export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
+PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py --num_frames 100 --topk 5 --model_name_or_path ${HOME}/checkpoint-3800/ --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json --output_dir ./tomloc_checkpoints_1_loo_post --lazy_preprocess True --video_folder data/tomloc/clip_features_merged_n3 --bf16 True --tf32 True --tune_mm_mlp_adapter True

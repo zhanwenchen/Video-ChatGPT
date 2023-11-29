@@ -7,7 +7,11 @@ from pickle import load as pickle_load
 from torch import (
     Tensor as torch_Tensor,
     tensor as torch_tensor,
+    as_tensor as torch_as_tensor,
     stack as torch_stack,
+    bfloat16 as torch_bfloat16,
+    float32 as torch_float32,
+    device as torch_device,
 )
 import torch.distributed as dist
 from torch.utils.data import Dataset
@@ -441,7 +445,7 @@ class LazySupervisedDataset(Dataset):
         # video exist in the data
         if 'video' in self.list_data_dict[i]:
             data_dict["video"] = features
-
+            data_dict['id'] = self.list_data_dict[i]['id']
         return data_dict
 
 
@@ -468,11 +472,15 @@ class DataCollatorForSupervisedDataset:
         }
 
         if 'video' in instances[0]:
-            features = [torch_tensor(instance['video']) for instance in instances]
+            device = torch_device('cuda')
+            features = [torch_as_tensor(instance['video'], device=device, dtype=torch_bfloat16) for instance in instances]
             if all(x is not None and x.shape == features[0].shape for x in features):
                 batch['video_spatio_temporal_features'] = torch_stack(features)
             else:
                 batch['video_spatio_temporal_features'] = features
+            # if len(instances) == 1:
+                # batch['id'] = [instanc?e['id'] for instance in instances]
+            batch['id'] = [instance['id'] for instance in instances]
 
         return batch
 
@@ -525,7 +533,7 @@ def train():
             sequence_bias_dicts=sequence_bias_dicts,
             device_map=device_map,
             num_frames=num_frames,
-            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            torch_dtype=torch_bfloat16 if training_args.bf16 else torch_float32,
             bias=bias,
         )
     else:
@@ -533,7 +541,7 @@ def train():
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
             device_map=device_map,
-            # torch_dtype=torch.bfloat16 if training_args.bf16 else torch.float,
+            torch_dtype=torch_bfloat16 if training_args.bf16 else torch_float32,
         )
 
     model.config.use_cache = False
