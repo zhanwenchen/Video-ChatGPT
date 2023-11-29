@@ -24,25 +24,23 @@ __pycache__/
 *.jpg
 
 # Custom
-data/ActivityNet/output/
 data/siq2/audio/
-data/siq2/output/
-data/siq2/video_features/
-data/tomloc/output/
-data/tomloc/audio/
-data/tomloc/output/
-data/tomloc/video_features/
-data/tomloc/qa/
+data/siq2/frames/
+video_chatgpt_training_removed.json
 
 # Custom: ActivityNet
 data/ActivityNet/Zero_Shot_QA/
 
 # Custom: checkpoints
+Video-ChatGPT_7B-1.1_Checkpoints_old
 checkpoint-9000/
 LLaVA-Lightning-7B-v1-1/
 llama-7b/
 tomloc_checkpoints_1/
 tomloc_checkpoints_1_loo/
+tomloc_checkpoints_1_loo_bias_100.0/
+tomloc_checkpoints_1_loo_pre/
+vtom_checkpoints_1/
 
 # wandb
 wandb/

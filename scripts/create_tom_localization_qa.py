@@ -78,11 +78,11 @@ def merge_subvideos(dict_in: dict, dict_keys_split_ns: list[list[str]], sep: str
     return list_of_dicts
 
 
-def get_unique_videos(list_of_dicts: list[dict]) -> dict:
+def get_unique_videos(list_of_dicts: list[dict], vid_column_name: str) -> dict:
     video_qa_dict = defaultdict(list)
 
     for qa in list_of_dicts:
-        video_qa_dict[qa['vid_name']].append(qa)
+        video_qa_dict[qa[vid_column_name]].append(qa)
     return video_qa_dict
 
 

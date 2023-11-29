@@ -583,7 +583,7 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --tune_mm_mlp_adapter True \
           --mm_use_vid_start_end \
           --bf16 True \
-          --output_dir ./tomloc_checkpoints_1_loo \
+          --output_dir ./tomloc_checkpoints_1_loo_pre \
           --num_train_epochs 3 \
           --per_device_train_batch_size 1 \
           --per_device_eval_batch_size 1 \
@@ -601,8 +601,7 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
           --model_max_length 2048 \
           --gradient_checkpointing True \
           --lazy_preprocess True \
-          --use_loo True \
-          --bias 100.0 \
+          --use_loo False \
           --num_frames 100 \
           --ddp_find_unused_parameters True
 
@@ -627,3 +626,47 @@ PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py
 # No count: 271
 # Accuracy: 0.6906392694063926
 # Average score: 0.6906392694063926
+
+PYTHONPATH="./:$PYTHONPATH" python scripts/split_train_eval_loo.py \
+    --input_json_file data/tomloc/qa/tomloc_train_removed_merged_n3_with_frames_idx_instruction.json \
+    --qas_train_loo_fpath data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
+    --qas_eval_loo_fpath data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json
+
+
+export NPROC_PER_NODE=4 # 1 For debugging
+export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
+PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 video_chatgpt/train/train_mem.py \
+          --model_name_or_path ./Video-ChatGPT_7B-1.1_Checkpoints_old/ \
+          --version v1 \
+          --data_path data/tomloc/qa/tomloc_train_loo_removed_merged_n3_with_frames_idx_instruction.json \
+          --video_folder data/tomloc/clip_features_merged_n3 \
+          --tune_mm_mlp_adapter True \
+          --mm_use_vid_start_end \
+          --bf16 True \
+          --output_dir ./tomloc_checkpoints_1_loo_pre \
+          --num_train_epochs 3 \
+          --per_device_train_batch_size 1 \
+          --per_device_eval_batch_size 1 \
+          --gradient_accumulation_steps 1 \
+          --evaluation_strategy "no" \
+          --save_strategy "steps" \
+          --save_steps 200 \
+          --save_total_limit 3 \
+          --learning_rate 2e-5 \
+          --weight_decay 0. \
+          --warmup_ratio 0.03 \
+          --lr_scheduler_type "cosine" \
+          --logging_steps 100 \
+          --tf32 True \
+          --model_max_length 2048 \
+          --gradient_checkpointing True \
+          --lazy_preprocess True \
+          --use_loo False \
+          --num_frames 100 \
+          --ddp_find_unused_parameters True
+
+
+# Start loo
+export NPROC_PER_NODE=1 # 1 For debugging
+export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
+PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py --num_frames 100 --topk 5 --model_name_or_path ${HOME}/checkpoint-3800/ --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json --output_dir ./tomloc_checkpoints_1_loo_post --lazy_preprocess True --video_folder data/tomloc/clip_features_merged_n3 --bf16 True --tf32 True --tune_mm_mlp_adapter True
