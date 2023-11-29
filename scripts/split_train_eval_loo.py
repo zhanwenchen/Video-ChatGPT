@@ -27,7 +27,7 @@ def split_train_eval_loo(json):
     for video, qas in qas_by_video.items():
         qas_train_vid, qas_eval_vid = qas[:-1], qas[-1]
         qas_train.extend(qas_train_vid)
-        qas_eval_loo.extend(qas_eval_vid)
+        qas_eval_loo.append(qas_eval_vid)
     return qas_train, qas_eval_loo
 
 
