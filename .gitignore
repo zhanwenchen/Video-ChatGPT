@@ -22,6 +22,8 @@ __pycache__/
 *.mp3
 *.wav
 *.jpg
+*.json
+cookies.txt
 
 # Custom
 data/siq2/audio/
