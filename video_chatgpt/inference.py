@@ -6,6 +6,7 @@ from torch import (
     no_grad as torch_no_grad,
     as_tensor as torch_as_tensor,
     inference_mode as torch_inference_mode,
+    int64 as torch_int64,
 )
 from video_chatgpt.video_conversation import conv_templates, SeparatorStyle
 from video_chatgpt.model.utils import KeywordsStoppingCriteria
@@ -89,8 +90,9 @@ def video_chatgpt_infer(video_frames, question, conv_mode, model, vision_tower, 
     # Preprocess video frames and get image tensor
     image_tensor = image_processor.preprocess(video_frames, return_tensors='pt')['pixel_values']
 
+    dtype = model.dtype
     # Move image tensor to GPU and reduce precision to half
-    image_tensor = image_tensor.to(device='cuda', dtype=torch_float16, non_blocking=True)
+    image_tensor = image_tensor.to(device='cuda', dtype=dtype, non_blocking=True)
 
     # Generate video spatio-temporal features
     with torch_no_grad():
@@ -99,7 +101,7 @@ def video_chatgpt_infer(video_frames, question, conv_mode, model, vision_tower, 
     video_spatio_temporal_features = get_spatio_temporal_features_torch(frame_features)
 
     # Move inputs to GPU
-    input_ids = torch_as_tensor(inputs.input_ids, device='cuda')
+    input_ids = torch_as_tensor(inputs.input_ids, device='cuda', dtype=torch_int64)
 
     # Define stopping criteria for generation
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2

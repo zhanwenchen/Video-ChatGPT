@@ -670,3 +670,34 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
 export NPROC_PER_NODE=1 # 1 For debugging
 export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
 PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py --num_frames 100 --topk 5 --model_name_or_path ${HOME}/checkpoint-3800/ --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json --output_dir ./tomloc_checkpoints_1_loo_post --lazy_preprocess True --video_folder data/tomloc/clip_features_merged_n3 --bf16 True --tf32 True --tune_mm_mlp_adapter True
+
+
+PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_tomloc_qa.py \
+    --model-name ${HOME}/checkpoint-3800/ \
+    --video_dir data/tomloc/video_merged_n3 \
+    --gt_file_qa data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json \
+    --output_dir data/tomloc/output \
+    --output_name video_chatgpt_tomloc_qa_preds_test_loo \
+    --loo_mm_projector_path "mm_projector_vid=['_71jULUUQhg+_AuZO31q62g+_CuZqXrhEZI']_qid_val=TODO_frame_idx=frame_idx_0.pt"
+
+
+PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py \
+    --pred_path data/tomloc/output/video_chatgpt_tomloc_qa_preds_val_loo.json \
+    --output_dir data/tomloc/output \
+    --output_json data/tomloc/output/video_chatgpt_tomloc_qa_results_test_loo.json \
+    --num_tasks 1
+
+(vtom) azureuser@vtom-a100-x4-n1:~/vtom$ PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py \
+>     --pred_path data/tomloc/output/video_chatgpt_tomloc_qa_preds_val_loo.json \
+>     --output_dir data/tomloc/output \
+>     --output_json data/tomloc/output/video_chatgpt_tomloc_qa_results_test_loo.json \
+>     --num_tasks 1
+completed_files: 1
+incomplete_files: 295
+completed_files: 296
+incomplete_files: 0
+All evaluation completed!
+Yes count: 230
+No count: 65
+Accuracy: 0.7796610169491526
+Average score: 0.7796610169491526
