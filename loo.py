@@ -301,28 +301,6 @@ class LOOTrainer:
         return loss
 
 
-def main():
-    # args = parse_args()
-    # lr = args.lr
-    lr = 1e-5
-    model, _, data_module, model_args, loo_args = setup()
-    topk = loo_args.topk
-    # trainer = setup()
-    # model, vision_tower, tokenizer, image_processor, video_token_len = initialize_model(args.model_name)
-    dataset_eval_loo = data_module['train_dataset']
-    data_collator = data_module['data_collator']
-    dataloader_eval_loo = DataLoader(dataset_eval_loo, collate_fn=data_collator)
-    num_frames = model_args.num_frames
-
-    loo_trainer = LOOTrainer(dataloader_eval_loo, model, lr, topk, num_frames)
-
-    loo_trainer.evaluate_loss()
-    # 4. Initialize an empty score list S.
-    dict_score_per_vid: dict = loo_trainer.compute_scores_and_save_model()
-    print('finished loo training')
-    return dict_score_per_vid
-
-
 # @torch_jit_script
 def ablate_frames(video_spatio_temporal_features: torch_Tensor, t: int):
     # [100, 1024]
@@ -390,6 +368,28 @@ def initialize_empty_score_list(loss_per_batch):
     # scores = torch_zeros_like(losses_0)
     return losses_0
     # return torch_zeros(len(loss_per_batch), dtype=torch_float32)
+
+
+def main():
+    # args = parse_args()
+    # lr = args.lr
+    lr = 1e-5
+    model, _, data_module, model_args, loo_args = setup()
+    topk = loo_args.topk
+    # trainer = setup()
+    # model, vision_tower, tokenizer, image_processor, video_token_len = initialize_model(args.model_name)
+    dataset_eval_loo = data_module['train_dataset']
+    data_collator = data_module['data_collator']
+    dataloader_eval_loo = DataLoader(dataset_eval_loo, collate_fn=data_collator)
+    num_frames = model_args.num_frames
+
+    loo_trainer = LOOTrainer(dataloader_eval_loo, model, lr, topk, num_frames)
+
+    loo_trainer.evaluate_loss()
+    # 4. Initialize an empty score list S.
+    dict_score_per_vid: dict = loo_trainer.compute_scores_and_save_model()
+    print('finished loo training')
+    return dict_score_per_vid
 
 
 if __name__ == '__main__':
