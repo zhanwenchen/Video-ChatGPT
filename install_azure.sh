@@ -669,7 +669,18 @@ PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master
 # Start loo
 export NPROC_PER_NODE=1 # 1 For debugging
 export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
-PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py --num_frames 100 --topk 5 --model_name_or_path ${HOME}/checkpoint-3800/ --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json --output_dir ./tomloc_checkpoints_1_loo_post --lazy_preprocess True --video_folder data/tomloc/clip_features_merged_n3 --bf16 True --tf32 True --tune_mm_mlp_adapter True
+# PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py --num_frames 100 --topk 5 --model_name_or_path ${HOME}/checkpoint-3800/ --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json --output_dir ./tomloc_checkpoints_1_loo_post --lazy_preprocess True --video_folder data/tomloc/clip_features_merged_n3 --bf16 True --tf32 True --tune_mm_mlp_adapter True
+PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py \
+    --num_frames 100 \
+    --topk 5 \
+    --model_name_or_path ./Video-ChatGPT_7B-1.1_Checkpoints_old/ \
+    --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json \
+    --output_dir ./tomloc_checkpoints_1_loo_post_correct \
+    --lazy_preprocess True \
+    --video_folder data/tomloc/clip_features_merged_n3 \
+    --bf16 True \
+    --tf32 True \
+    --tune_mm_mlp_adapter True
 
 
 PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_tomloc_qa.py \
@@ -678,7 +689,7 @@ PYTHONPATH="./:$PYTHONPATH" python video_chatgpt/eval/run_inference_tomloc_qa.py
     --gt_file_qa data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json \
     --output_dir data/tomloc/output \
     --output_name video_chatgpt_tomloc_qa_preds_test_loo \
-    --loo_mm_projector_path "mm_projector_vid=['_71jULUUQhg+_AuZO31q62g+_CuZqXrhEZI']_qid_val=TODO_frame_idx=frame_idx_0.pt"
+    --loo_mm_projector_path "mm_projector_vid=['_71jULUUQhg+_AuZO31q62g+_CuZqXrhEZI']_qid_val=TODO_frame_idx=frame_idx_0.pt" # TODO: change this
 
 
 PYTHONPATH="./:$PYTHONPATH" python quantitative_evaluation/evaluate_tomloc_qa.py \
