@@ -221,26 +221,26 @@ class LOOTrainer:
         # return {'weight': layer_weights, 'bias': layer_bias}
         return layer_weights, layer_bias
 
-    def compute_scores_and_save_model(self):
+    def run(self):
         '''
         For all videos
         '''
         loss_per_vid = self.loss_per_vid
         # Return: dict_score_per_vid
         dict_score_per_vid = {}
-        compute_scores_and_save_model_single_video = self.compute_scores_and_save_model_single_video
+        run_batch = self.run_batch
         for batch in self.dataloader_eval_loo:
             # vid = batch.pop('id')
             vid = batch['id']
             assert len(vid) == 1
             vid = vid[0]
             loss_0 = loss_per_vid[vid]
-            dict_score_qid = compute_scores_and_save_model_single_video(batch, loss_0)
+            dict_score_qid = run_batch(batch, loss_0)
             dict_score_per_vid[vid] = dict_score_qid
         return dict_score_per_vid
     # TODO: import __getitem__?
 
-    def compute_scores_and_save_model_single_video(self, batch, loss_0):
+    def run_batch(self, batch, loss_0):
         model = self.model
         topk = self.topk
         device  = loss_0.device
@@ -387,7 +387,7 @@ def main():
 
     loo_trainer.evaluate_loss()
     # 4. Initialize an empty score list S.
-    dict_score_per_vid: dict = loo_trainer.compute_scores_and_save_model()
+    dict_score_per_vid: dict = loo_trainer.run()
     print('finished loo training')
     return dict_score_per_vid
 
