@@ -52,16 +52,17 @@ class LooArguments:
     topk: int = field()
 
 
-def setup():
-    parser = HfArgumentParser(
-        (ModelArguments, DataArguments, TrainingArguments, LooArguments))
-    model_args, data_args, training_args, loo_args = parser.parse_args_into_dataclasses()
+def get_tokenizer_model(which: str, model_args, training_args, device_map):
+    match which:
+        case 'pretrained':
+            model_name_or_path = model_args.model_name_or_path_pretrained
+        case 'untrained':
+            model_name_or_path = model_args.model_name_or_path_untrained
+        case _:
+            raise ValueError(f'Unknown which: {which}')
 
-    device_index = Accelerator().process_index
-    device_map = {"": device_index}
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=training_args.cache_dir,
+        model_name_or_path,        cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -69,11 +70,23 @@ def setup():
     )
 
     model = VideoChatGPTLlamaForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
+        model_name_or_path,
         cache_dir=training_args.cache_dir,
         device_map=device_map,
         torch_dtype=torch_bfloat16 if training_args.bf16 else torch_float32,
     )
+
+    return tokenizer, model
+
+
+def setup(which):
+    parser = HfArgumentParser(
+        (ModelArguments, DataArguments, TrainingArguments, LooArguments))
+    model_args, data_args, training_args, loo_args = parser.parse_args_into_dataclasses()
+
+    device_index = Accelerator().process_index
+    device_map = {"": device_index}
+    tokenizer, model = get_tokenizer_model(which, model_args, training_args, device_map)
 
     model.config.use_cache = False
 
@@ -143,9 +156,10 @@ def setup():
 
 
 class LOOTrainer:
-    def __init__(self, dataloader_eval_loo, model, lr: float, topk: int, num_frames: int):
-        self.model = model
-        self.device = model.device
+    def __init__(self, dataloader_eval_loo, model_untrained, model_pretrained, lr: float, topk: int, num_frames: int):
+        self.model_untrained = model_untrained
+        self.model_pretrained = model_pretrained
+        self.device = model_untrained.device
         self.lr = lr
         self.topk = topk
         self.dataloader_eval_loo = dataloader_eval_loo
@@ -167,7 +181,7 @@ class LOOTrainer:
         3. evalute on each video. Assume the dataloader batch size is 1. Model is not changed.
         '''
         assert self.loss_per_vid is None
-        model = self.model
+        model = self.model_untrained
         model.eval()
         loss_per_vid = {}
         device = self.device
@@ -183,13 +197,13 @@ class LOOTrainer:
         assert self.check_model_hash()
 
     def hash(self):
-        return hash(str(self.model))
+        return hash(str(self.model_untrained))
 
     def check_model_hash(self):
         return self.hash() == self.model_hash_init
 
     def reset_model(self, is_training: bool):
-        model = self.model
+        model = self.model_untrained
         # named_parameters = dict(model.named_parameters())
         # parameter_name_weight = named_parameters['model.mm_projector.weight']
         # parameter_name_bias = named_parameters['model.mm_projector.bias']
@@ -215,7 +229,7 @@ class LOOTrainer:
         assert self.check_model_hash()
 
     def get_model_weights_biases(self) -> Tuple:
-        get_parameter = self.model.get_parameter
+        get_parameter = self.model_untrained.get_parameter
         layer_weights = get_parameter("model.mm_projector.weight")
         layer_bias = get_parameter("model.mm_projector.bias")
         # return {'weight': layer_weights, 'bias': layer_bias}
@@ -241,7 +255,7 @@ class LOOTrainer:
     # TODO: import __getitem__?
 
     def run_batch(self, batch, loss_0):
-        model = self.model
+        model = self.model_untrained
         topk = self.topk
         device  = loss_0.device
         # each vid (295) has 1 score for each top-k frames. [295, k] # [295, k], but now it's just k.
@@ -261,7 +275,7 @@ class LOOTrainer:
             batch['video_spatio_temporal_features'] = frames
             # D_minus_i = frames_ablated[i]
             # Reset model
-            self.reset_model(True)
+            self.reset_model(True) # Retrain on batch? Where does the batch even go?
             loss = train_model_on_batch(batch)
             score = absdiff(loss, loss_0)
             # if scores is good, Save parameters
@@ -288,7 +302,7 @@ class LOOTrainer:
         '''
         Train each model only on a single data point.
         '''
-        model = self.model
+        model = self.model_untrained
         optimizer = AdamW(model.parameters(), lr=self.lr)
         optimizer.zero_grad(set_to_none=True)
         device = self.device
@@ -374,7 +388,8 @@ def main():
     # args = parse_args()
     # lr = args.lr
     lr = 1e-5
-    model, _, data_module, model_args, loo_args = setup()
+    model_untrained, _, data_module, model_args, loo_args = setup('untrained')
+    model_pretrained, _, data_module, model_args, loo_args = setup('pretrained')
     topk = loo_args.topk
     # trainer = setup()
     # model, vision_tower, tokenizer, image_processor, video_token_len = initialize_model(args.model_name)
@@ -383,7 +398,7 @@ def main():
     dataloader_eval_loo = DataLoader(dataset_eval_loo, collate_fn=data_collator)
     num_frames = model_args.num_frames
 
-    loo_trainer = LOOTrainer(dataloader_eval_loo, model, lr, topk, num_frames)
+    loo_trainer = LOOTrainer(dataloader_eval_loo, model_untrained, model_pretrained, lr, topk, num_frames)
 
     loo_trainer.evaluate_loss()
     # 4. Initialize an empty score list S.
