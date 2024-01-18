@@ -673,7 +673,8 @@ export OMP_NUM_THREADS=$(($(nproc) / ${NPROC_PER_NODE}))
 PYTHONPATH="./:$PYTHONPATH" torchrun --nproc_per_node=${NPROC_PER_NODE} --master_port 29001 loo_mem.py \
     --num_frames 100 \
     --topk 5 \
-    --model_name_or_path ./Video-ChatGPT_7B-1.1_Checkpoints_old/ \
+    --model_name_or_path_untrained ./Video-ChatGPT_7B-1.1_Checkpoints_old/checkpoint-9000 \
+    --model_name_or_path_pretrained ${HOME}/checkpoint-3800 \
     --data_path data/tomloc/qa/tomloc_eval_loo_removed_merged_n3_with_frames_idx_instruction.json \
     --output_dir ./tomloc_checkpoints_1_loo_post_correct \
     --lazy_preprocess True \
