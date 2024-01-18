@@ -2,9 +2,10 @@
 Leave-one-out training.
 python loo.py
 '''
+from os.path import join as os_path_join
 from dataclasses import dataclass, field
 from typing import Tuple
-from tqdm import tqdm, trange
+from tqdm import trange
 from torch import (
     no_grad as torch_no_grad,
     zeros as torch_zeros,
@@ -50,19 +51,22 @@ from video_chatgpt.model import VideoChatGPTLlamaForCausalLM, VideoChatGPTLlamaF
 @dataclass
 class LooArguments:
     topk: int = field()
+    model_name_or_path_untrained: str = field()
+    model_name_or_path_pretrained: str = field()
 
 
-def get_tokenizer_model(which: str, model_args, training_args, device_map):
+def get_tokenizer_model(which: str, loo_args, training_args, device_map):
     match which:
         case 'pretrained':
-            model_name_or_path = model_args.model_name_or_path_pretrained
+            model_name_or_path = loo_args.model_name_or_path_pretrained
         case 'untrained':
-            model_name_or_path = model_args.model_name_or_path_untrained
+            model_name_or_path = loo_args.model_name_or_path_untrained
         case _:
             raise ValueError(f'Unknown which: {which}')
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path,        cache_dir=training_args.cache_dir,
+        model_name_or_path,
+        cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -86,7 +90,7 @@ def setup(which):
 
     device_index = Accelerator().process_index
     device_map = {"": device_index}
-    tokenizer, model = get_tokenizer_model(which, model_args, training_args, device_map)
+    tokenizer, model = get_tokenizer_model(which, loo_args, training_args, device_map)
 
     model.config.use_cache = False
 
@@ -147,7 +151,7 @@ def setup(which):
             FSDP.__init__ = patch_FSDP_use_orig_params(FSDP.__init__)
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
-    return model, tokenizer, data_module, model_args, loo_args
+    return model, tokenizer, data_module, model_args, loo_args, training_args
     # trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
     # trainer.train()
@@ -156,7 +160,7 @@ def setup(which):
 
 
 class LOOTrainer:
-    def __init__(self, dataloader_eval_loo, model_untrained, model_pretrained, lr: float, topk: int, num_frames: int):
+    def __init__(self, dataloader_eval_loo, model_untrained, model_pretrained, lr: float, topk: int, num_frames: int, output_dir: str):
         self.model_untrained = model_untrained
         self.model_pretrained = model_pretrained
         self.device = model_untrained.device
@@ -168,6 +172,7 @@ class LOOTrainer:
         # Cache linear layer for easy restoration
         self.layer_weights, self.layer_bias = self.get_model_weights_biases()
         self.num_frames = num_frames
+        self.output_dir = output_dir
 
     def init_model(self):
         pass
@@ -238,6 +243,9 @@ class LOOTrainer:
     def run(self):
         '''
         For all videos
+
+        First, train the model on all batches. Where is the current code?
+
         '''
         loss_per_vid = self.loss_per_vid
         # Return: dict_score_per_vid
@@ -255,6 +263,12 @@ class LOOTrainer:
     # TODO: import __getitem__?
 
     def run_batch(self, batch, loss_0):
+        '''
+        For each video
+            1. Train an untrained model on the full batch
+            2. For each frame, train the untrained model on the batch without the frame
+            2.1. Train the untrained model on each of the
+        '''
         model = self.model_untrained
         topk = self.topk
         device  = loss_0.device
@@ -269,6 +283,7 @@ class LOOTrainer:
         # frames_ablated = ablate_frame_all(frames_original)
         # For each frame, construct a new batch
         train_model_on_batch = self.train_model_on_batch
+        output_dir = self.output_dir
         for idx in trange(self.num_frames):
             # Reset batch
             frames = ablate_frames(frames_original, idx)
@@ -281,7 +296,7 @@ class LOOTrainer:
             # if scores is good, Save parameters
             if score_is_good(scores_topk, score):
                 frame_idx = f'frame_idx_{idx}'
-                save_linear_layer_weights(model, vid, qid_val, frame_idx)
+                save_linear_layer_weights(model, vid, qid_val, frame_idx, output_dir)
                 # breakpoint()
                 # (Pdb) scores_topk.device
                 # device(type='cpu')
@@ -364,7 +379,7 @@ def get_model_weights_biases(model) -> dict:
     return {'weight': layer_weights, 'bias': layer_bias}
 
 
-def save_linear_layer_weights(model, vid: str, qid_val: str, frame_idx: str) -> None:
+def save_linear_layer_weights(model, vid: str, qid_val: str, frame_idx: str, output_dir: str) -> None:
 # Get the weight of the first layer
     dict_weights_biases = get_model_weights_biases(model)
     dict_weights_biases['vid'] = vid
@@ -373,7 +388,7 @@ def save_linear_layer_weights(model, vid: str, qid_val: str, frame_idx: str) -> 
     suffix = f'vid={vid}_qid_val={qid_val}_frame_idx={frame_idx}'
 
     # Save the weight to a file
-    torch_save(dict_weights_biases, f'mm_projector_{suffix}.pt')
+    torch_save(dict_weights_biases, os_path_join(output_dir, f'mm_projector_{suffix}.pt'))
 
 
 # 4. Initialize an empty score list S.
@@ -388,17 +403,17 @@ def main():
     # args = parse_args()
     # lr = args.lr
     lr = 1e-5
-    model_untrained, _, data_module, model_args, loo_args = setup('untrained')
-    model_pretrained, _, data_module, model_args, loo_args = setup('pretrained')
+    model_untrained, _, data_module, model_args, loo_args, training_args = setup('untrained')
+    model_pretrained, _, data_module, model_args, loo_args, training_args = setup('pretrained')
     topk = loo_args.topk
     # trainer = setup()
     # model, vision_tower, tokenizer, image_processor, video_token_len = initialize_model(args.model_name)
     dataset_eval_loo = data_module['train_dataset']
     data_collator = data_module['data_collator']
-    dataloader_eval_loo = DataLoader(dataset_eval_loo, collate_fn=data_collator)
+    dataloader_eval_loo = DataLoader(dataset_eval_loo, collate_fn=data_collator, pin_memory=False)
     num_frames = model_args.num_frames
 
-    loo_trainer = LOOTrainer(dataloader_eval_loo, model_untrained, model_pretrained, lr, topk, num_frames)
+    loo_trainer = LOOTrainer(dataloader_eval_loo, model_untrained, model_pretrained, lr, topk, num_frames, training_args.output_dir)
 
     loo_trainer.evaluate_loss()
     # 4. Initialize an empty score list S.
