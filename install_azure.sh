@@ -1,53 +1,68 @@
 # install_azure.sh
 
-# The following packages will be REMOVED:
-#   cuda-drivers-fabricmanager-470 libnvidia-decode-545 libnvidia-encode-545 libnvidia-fbc1-545 nvidia-dkms-545 nvidia-driver-545 nvidia-kernel-source-545
-#   xserver-xorg-video-nvidia-545
-# The following packages have been kept back:
-#   moby-cli moby-engine nvidia-container-toolkit nvidia-container-toolkit-base
-# The following packages will be upgraded:
-#   libcudnn8 libcudnn8-dev libnccl-dev libnccl2 libnvidia-container-tools libnvidia-container1 libxnvctrl0 nvidia-fabricmanager-470 nvidia-settings
-# 9 upgraded, 0 newly installed, 8 to remove and 4 not upgraded.
 
-# 0. (DONE) Remove stale apt sources that break modern NVIDIA toolchain installations:
-sudo rm /etc/apt/sources.list.d//nccl-2.2.13-ga-cuda9.2.list /etc/apt/sources.list.d/nccl-2.2.13-ga-cuda9.2.list.save
+# -1: Set gcc and g++ versions:
+sudo update-alternatives --remove-all gcc
+sudo update-alternatives --remove-all g++
+
+sudo apt install gcc-12 g++-12
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
 # TODO: remove a certain old NVIDIA apt-key with sudo apt-key remove ...
 
 
 # 1. (DONE)
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb # 20.04
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb # 20.04
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb # 20.04
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb # 22.04
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb # 22.04
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
-
+# 2.1 Install nvidia-driver-550
 # 2.1 Install nvidia-driver-545
 sudo apt update
-sudo apt full-upgrade
+sudo apt install nvidia-driver-550
 sudo apt install nvidia-driver-545
-
+# 2.2 Install CUDA 12.4
 # 2.2 Install CUDA 12.3
 cd # Cannot have .deb be in a /mnt drive.
 
-sudo apt update
+sudo apt install cuda-toolkit-12-4
+sudo apt remove cuda-toolkit-12-3
+sudo apt remove cuda-toolkit-12-3
+sudo apt remove cuda-toolkit-12-3
 sudo apt install cuda-toolkit-12-3
 sudo bash -c "echo '/usr/local/cuda/lib64' > /etc/ld.so.conf"
 sudo bash -c "echo 'LD_LIBRARY_PATH=/usr/local/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}' >> /etc/environment"
-# also prepend /usr/local/cuda/bin: to the PATH variable value in sudo vim /etc/environment.
-sudo ldconfig
+# (DONE) Install cuDNN 8 (note that pytorch doesn't support cudnn 9 yet)
 
-# (DONE) Install cuDNN
-sudo apt install libcudnn8 libcudnn8-dev libcudnn8-samples
+# sudo apt install cudnn9-cuda-12 libcudnn9-samples
+sudo apt remove libcudnn8 libcudnn8-dev libcudnn8-samples
+sudo mv /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list.save
+sudo apt install cudnn8-cuda-12 libcudnn8-samples
 
+# sudo apt install cudnn9-cuda-12 libcudnn9-samples
+sudo apt remove libcudnn8 libcudnn8-dev libcudnn8-samples
+sudo mv /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list.save
+sudo apt install cudnn8-cuda-12 libcudnn8-samples
+sudo apt install libcusparse-12-4 libcusparse-dev-12-4
+# sudo apt install cudnn9-cuda-12 libcudnn9-samples
+sudo apt remove libcudnn8 libcudnn8-dev libcudnn8-samples
+sudo mv /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list /etc/apt/sources.list.d/cuda-ubuntu2004-x86_64.list.save
+sudo apt install cudnn8-cuda-12 libcudnn8-samples
+sudo apt install libcusparse-12-4 libcusparse-dev-12-4
+sudo apt install nvidia-fabricmanager-550 nvidia-fabricmanager-dev-550 cuda-drivers-fabricmanager-550
 # (DONE) NCCL:
 sudo apt install libnccl2 libnccl-dev
 
-# (DONE) NVIDIA cuSparse
-sudo apt install libcusparselt0 libcusparselt-dev
+sudo apt install libcusparse-12-4 libcusparse-dev-12-4
+sudo apt install nvidia-fabricmanager-550 nvidia-fabricmanager-dev-550 cuda-drivers-fabricmanager-550
 
 # (DONE) NVIDIA Docker and Moby Docker engine
 sudo apt install nvidia-container-toolkit moby-engine moby-cli
 
-# (DONE) NVSwitch drivers
+sudo apt install nvidia-fabricmanager-550 nvidia-fabricmanager-dev-550 cuda-drivers-fabricmanager-550
 sudo apt install nvidia-fabricmanager-545 nvidia-fabricmanager-dev-545
 
 # (DONE) Remaining nvidia libs
@@ -55,31 +70,31 @@ sudo apt install libxnvctrl0 nvidia-settings
 
 # apt clean up
 sudo apt autoremove
-sudo apt clean
+git clone --single-branch --branch n12.0.16.1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git # NOTE: n11.1.5.3 works. n12.0.16.0 works. n12.0.16.1 works. n12.1.14.0 and above do not work.
 sudo apt autoclean
 
 
 # The libs
-
-export ENV_NAME=vtom
+git clone --single-branch --branch n12.0.16.1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git # NOTE: n11.1.5.3 works. n12.0.16.0 works. n12.0.16.1 works. n12.1.14.0 and above do not work.
+git clone --single-branch --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git # NOTE: 6.0 and above will break decord.
 export INSTALL_DIR=/mnt/batch/tasks/shared/LS_root/mounts/clusters/vtom-a100-x4-n1/code/Users/video.tom/
 export PROJECT_DIR=${INSTALL_DIR}/${ENV_NAME}
-export ENVS_DIR=${INSTALL_DIR}/envs
-
-mkdir -p ${ENVS_DIR}
+export MY_SM=86 # NOTE: For A100, it's 8.0
+git clone --single-branch --branch n12.0.16.1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git # NOTE: n11.1.5.3 works. n12.0.16.0 works. n12.0.16.1 works. n12.1.14.0 and above do not work.
+git clone --single-branch --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git # NOTE: 6.0 and above will break decord.
 cd ${INSTALL_DIR}
 
-
-# Instal nv-codec-headers
-git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+export MY_SM=86 # NOTE: For A100, it's 8.0
+git clone --single-branch --branch n12.0.16.1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git # NOTE: n11.1.5.3 works. n12.0.16.0 works. n12.0.16.1 works. n12.1.14.0 and above do not work.
+git clone --single-branch --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git # NOTE: 6.0 and above will break decord.
 cd nv-codec-headers
 sudo make install
-
+export MY_SM=86 # NOTE: For A100, it's 8.0
 # 1b. Install ffmpeg5 with NVIDIA Video Codec SDK support
-cd ${INSTALL_DIR}
+git clone --single-branch --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git # NOTE: 6.0 and above will break decord.
 git clone https://git.ffmpeg.org/ffmpeg.git
 cd ffmpeg
-sudo apt install yasm libx264-dev libgnutls28-dev
+export MY_SM=86 # NOTE: For A100, it's 8.0
 export MY_SM=80
 ./configure \
   --extra-cflags='-I/usr/local/cuda/include' \
@@ -124,70 +139,70 @@ ffmpeg -hide_banner -encoders | grep 264
 src="https://download.pytorch.org/torchaudio/tutorial-assets/stream-api/NASAs_Most_Scientifically_Complex_Space_Observatory_Requires_Precision-MP4_small.mp4"
 ffmpeg -hide_banner -y -vsync 0 \
      -hwaccel cuvid \
-     -hwaccel_output_format cuda \
-     -c:v h264_cuvid \
-     -resize 360x240 \
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+sh Miniconda3-latest-Linux-x86_64.sh
      -i "${src}" \
      -c:a copy \
-     -c:v h264_nvenc \
-     -b:v 5M test.mp4
-rm test.mp4
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+sh Miniconda3-latest-Linux-x86_64.sh
 
 # 2.2 Install Anaconda under ${HOME}. Will not work under /mnt
-cd
-wget https://repo.anaconda.com/archive/Anaconda3-2023.09-0-Linux-x86_64.sh
-chmod +x Anaconda3-2023.09-0-Linux-x86_64.sh
-sh Anaconda3-2023.09-0-Linux-x86_64.sh
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+sh Miniconda3-latest-Linux-x86_64.sh
+conda create -n vtom cmake ninja intel::mkl-static intel::mkl-include astunparse "expecttest!=0.2.0" hypothesis numpy psutil pyyaml requests setuptools "typing-extensions>=4.8.0" sympy filelock networkx jinja2 fsspec
 # Say yes to everything
 source .bashrc
+conda install libstdcxx-ng=12.3 libgcc-ng=12.3 libgomp=12.3 -c defaults -c conda-forge
+conda install -c pytorch magma-cuda124
+pip install types-dataclasses "optree>=0.9.1" lark
+# To run GPT4V
+pip install yacs azure-storage-blob ipywidgets
+conda install libstdcxx-ng=12.3 libgcc-ng=12.3 libgomp=12.3 -c defaults -c conda-forge
+cd && git clone --recursive --single-branch --branch v2.2.2 https://github.com/pytorch/pytorch.git
+pip install types-dataclasses "optree>=0.9.1" lark
+# To run GPT4V
+pip install yacs azure-storage-blob ipywidgets
+conda install libstdcxx-ng=12.3 libgcc-ng=12.3 libgomp=12.3 -c defaults -c conda-forge
+cd && git clone --recursive --single-branch --branch v2.2.2 https://github.com/pytorch/pytorch.git
+# TODO: 1. Rename CUSPARSE_COMPUTE_TF32 to CUSPARSE_COMPUTE_32F https://github.com/pytorch/pytorch/pull/99468/commits/367387bab836c73c23719f97d929572c8b4e0fad
+# TODO: 2. Add #include <thrust/swap.h> after imports to pytorch/aten/src/ATen/native/cuda/LinearAlgebra.cu
+pip install types-dataclasses "optree>=0.9.1" lark
+# To run GPT4V
+export TORCH_CUDA_ARCH_LIST="8.6" # NOTE: For A100, it's 8.0
 
-export ENV_NAME=vtom
-export INSTALL_DIR=/mnt/batch/tasks/shared/LS_root/mounts/clusters/vtom-a100-x4-n1/code/Users/video.tom/
-export PROJECT_DIR=${INSTALL_DIR}/${ENV_NAME}
-export ENVS_DIR=${INSTALL_DIR}/envs
-
-conda update --all
-# conda create -p ${ENVS_DIR}/${ENV_NAME} python=3.11 pip numpy
-conda create -n vtom python=3.11 pip numpy
-# conda config --add pkgs_dirs ${ENVS_DIR}
-conda activate vtom
-
-conda install -c pytorch magma-cuda121 # TODO: include magma-cuda122 building in the future
-conda install cmake ninja astunparse expecttest hypothesis psutil pyyaml requests setuptools typing-extensions sympy filelock networkx jinja2 fsspec packaging mkl mkl-include
-pip install jinja2 types-dataclasses optree
-
-# 2.3 Install PyTorch from source
-cd && git clone --recursive --single-branch --branch v2.1.0 https://github.com/pytorch/pytorch.git
-cd pytorch
-# 1. sync submodules
+cd && git clone --recursive --single-branch --branch v2.2.2 https://github.com/pytorch/pytorch.git
+# TODO: 1. Rename CUSPARSE_COMPUTE_TF32 to CUSPARSE_COMPUTE_32F https://github.com/pytorch/pytorch/pull/99468/commits/367387bab836c73c23719f97d929572c8b4e0fad
+# TODO: 2. Add #include <thrust/swap.h> after imports to pytorch/aten/src/ATen/native/cuda/LinearAlgebra.cu
+echo "DONE building pytorch" && cd # NOTE it's important to move out of the pytorch build directory to import torch.
 git submodule sync
 git submodule update --init --recursive
-conda activate vtom
-export _GLIBCXX_USE_CXX11_ABI=1
-export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
+# TODO: 2. Add #include <thrust/swap.h> after imports to pytorch/aten/src/ATen/native/cuda/LinearAlgebra.cu
+echo "DONE building pytorch" && cd # NOTE it's important to move out of the pytorch build directory to import torch.
 export TORCH_CUDA_ARCH_LIST="8.0"
 export USE_FFMPEG=1
-export USE_SYSTEM_NCCL=1
+pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
 python setup.py clean && echo "Done Cleaning"
-python setup.py develop | tee install_pytorch.log # NOTE: you cannot remove the pytorch folder. Otherwise you'll get ModuleNotFoundError: No module named 'torch'
-echo "DONE building pytorch"
-cd
-rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7 # Solves `Undefined pointer to LIBFFI_7.0_BASE`
+echo "DONE building pytorch" && cd # NOTE it's important to move out of the pytorch build directory to import torch.
+cmake .. -DUSE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 -DCMAKE_BUILD_TYPE=Release
 python -c "import torch; print(torch.cuda.is_available()); exit()"
-python -c "from torch import randn, matmul; tensor1 = tensor2 = randn(3, device='cuda'); out = matmul(tensor1, tensor2); print(out.mean(), out.device);"
+pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
 pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
 
-
+pip install .
 # 3. Install decord
 cd
 git clone --recursive https://github.com/zhanwenchen/decord
 cd decord
-mkdir build && cd build
+pip install .
 cmake .. -DUSE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=80 -DCMAKE_BUILD_TYPE=Release
 make -j
 # Install decord Python bindings
 conda activate vtom
-cd ../python
+pip install .
 python setup.py install --user
 # Test decord installation
 cd examples
@@ -197,16 +212,22 @@ cd examples
 Additionally, install [FlashAttention](https://github.com/HazyResearch/flash-attention) for training,
 ```shell
 pip install ninja einops
+conda activate vtom
+cd ~/vtom
 
 cd
 git clone --single-branch --branch v2.3.3 git@github.com:Dao-AILab/flash-attention.git
 cd flash-attention
 MAX_JOBS=4 python setup.py install # Cannot use pip install . on this repo. Also need to specify
+conda activate vtom
+cd ~/vtom
 
 
 # Move data here
 
 
+conda activate vtom
+cd ~/vtom
 # Finally, run training.
 conda activate vtom
 cd ~/vtom
