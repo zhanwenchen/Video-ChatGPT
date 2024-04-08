@@ -3,15 +3,13 @@ from os import access as os_access, W_OK as os_W_OK
 from os.path import exists as os_path_exists, join as os_path_join, basename as os_path_basename, dirname as os_path_dirname, isdir as os_path_isdir
 from glob import glob as glob_glob
 from json import load as json_load, dump as json_dump
-from json.decoder import JSONDecodeError
 from collections import defaultdict
 from pathlib import Path
 from time import sleep
 # from urllib.parse import unquote
-from pickle import dump as pickle_dump, load as pickle_load
+from pickle import dump as pickle_dump
 from httpx import get as httpx_get
 from requests import post as requests_post, put as requests_put, delete as requests_delete, RequestException
-from tqdm import tqdm
 from tqdm.notebook import tqdm  # pip install ipywidgets
 # from tqdm.contrib import tenumerate
 from azure.storage.blob import BlobServiceClient
@@ -95,7 +93,6 @@ class AzureVideoQA:
         # 2. Set up Azure Computer Vision
         self.azure_computer_vision_endpoint = config.AZURE_COMPUTER_VISION.ENDPOINT_DOMAIN
         self.azure_computer_vision_key = config.AZURE_COMPUTER_VISION.KEY
-        self.azure_computer_vision_index_name = config.AZURE_COMPUTER_VISION.VIDEO_INDEX_NAME
 
         # 1. Set up Azure OpenAI
         self.azure_openai_endpoint = config.AZURE_OPENAI.ENDPOINT_DOMAIN
@@ -168,8 +165,8 @@ class AzureVideoQA:
 
         return dict_video_name_url
 
-    def create_video_index(self):
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}'
+    def create_video_index(self, acv_document_id: str):
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}'
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
@@ -185,31 +182,42 @@ class AzureVideoQA:
         response = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         response_json = response.json()
         if 'error' in response_json:
-            assert response_json['error']['code'] == 'AlreadyExists'
-            print(f'Index {self.azure_computer_vision_index_name} already exists')
+            try:
+                assert response_json['error']['code'] == 'AlreadyExists'
+            except:
+                raise SystemExit(f'Failed to create index. Error: {response_json}') from None
+            print(f'Index {acv_document_id} already exists')
+            # if recreating:
+            #     self.delete_ingestion_index(acv_document_id)
+            #     self.create_video_index(acv_document_id, recreating=False)
         return response_json
 
-    def delete_ingestion_index(self) -> None:
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}'
+    def delete_ingestion_index(self, acv_document_id) -> None:
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}'
         params = {'api-version': '2023-05-01-preview'}
         headers = {'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key}
         response = requests_delete(url, params=params, headers=headers, timeout=TIMEOUT)
         assert response.status_code == 204
 
+    def delete_all_ingestion_index(self) -> None:
+        indices = self.get_video_indices()
+        return [self.delete_ingestion_index(index) for index in indices]
+
     def ingest_video(self, video_name: str, video_url: dict):
+        acv_document_id = f'i{Path(video_name).stem}'
+        # If the index doesn't exist, the problem is likely that the video has never been ingested.
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        acv_document_id = f'i{Path(video_name).stem}'
         video = {
             'mode': 'add',  # Must correspond to acv_document_id exactly.
             'documentId': acv_document_id,
             'documentUrl': video_url,
         }
         data = {'videos': [video], 'includeSpeechTranscript': True}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}/ingestions/{acv_document_id}'
         try:
             response_batch = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         except RequestException as e:
@@ -240,7 +248,7 @@ class AzureVideoQA:
             'documentUrl': video_url,
         }
         data = {'videos': [video]}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}/ingestions/{acv_document_id}'
         try:
             response_batch = requests_delete(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         except RequestException as e:
@@ -271,13 +279,12 @@ class AzureVideoQA:
         params = {'api-version': '2023-05-01-preview'}
         responses_jsons = []
         azure_computer_vision_endpoint = self.azure_computer_vision_endpoint
-        azure_computer_vision_index_name = self.azure_computer_vision_index_name
         # for i, videos_batch in tenumerate(batched(videos, batch_size)):
         for video in (pbar := tqdm(videos)):
             data = {'videos': [video]}
             acv_document_id = video['documentId']
             pbar.set_description(f"ingest_videos: Processing {acv_document_id}")
-            url = f'https://{azure_computer_vision_endpoint}/computervision/retrieval/indexes/{azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+            url = f'https://{azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}/ingestions/{acv_document_id}'
             try:
                 response_batch = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
             except RequestException as e:
@@ -311,7 +318,7 @@ class AzureVideoQA:
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id}/ingestions/{acv_document_id}'
         try:
             response = httpx_get(url, params=params, headers=headers, timeout=TIMEOUT)
         except RequestException as e:
@@ -327,7 +334,7 @@ class AzureVideoQA:
         state = response_json['state']
         return state
 
-    def get_ingestion_statuses(self) -> dict:
+    def get_video_indices(self) -> set[str]:
         '''
         _summary_
 
@@ -335,70 +342,38 @@ class AzureVideoQA:
             SystemExit: _description_
 
         Returns:
-            dict: JSON representation of the status of all ingestions for the index
+            set[str]: {
+                        '0k3gj5ybo67',
+                        '14yz2qkzve1',
+                        '3q9c1zkwm3u',
+                        '5t70tei07fa',
+                        '68n38j1dxty',
+                        '7pbbj26od1b',
+                        '857dn4t913p',
+                        '9cjfic15jdu',
+                        'bn14yjdtf3j',
+                        'c8zigj16a16'
+                      }
         '''
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes'
         try:
             response = httpx_get(url, params=params, headers=headers, timeout=TIMEOUT)
         except RequestException as e:
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
 
-        print(response.text)
+        # print(response.text)
         try:
             response.raise_for_status()
         except Exception as e:
             print(response.request.text)
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
         response_json = response.json()
-        return response_json
-
-    def _ask_one_question_new(self, acv_document_id: str, question: str, url_video: str, timeout: int):
-
-        # Send a completion call to generate an answer
-        print('Sending a test completion job')
-        # start_phrase = 'Write a tagline for an ice cream shop. '
-        # response = client.completions.create(model=deployment_name, prompt=start_phrase, max_tokens=10)
-        # print(start_phrase+response.choices[0].text)
-        response = self.azure_openai_client.chat.completions.create(
-            model=self.azure_openai_deployment,
-            messages=[
-                { "role": "system", "content": "You are a helpful assistant." },
-                { "role": "user", "content": [
-                    {
-                        "type": "acv_document_id",
-                        "acv_document_id": acv_document_id,
-                    },
-                    {
-                        "type": "text",
-                        "text": "Describe this video:"
-                    }
-                ] }
-            ],
-            extra_body={
-                "dataSources": [
-                    {
-                        "type": "AzureComputerVisionVideoIndex",
-                        "parameters": {
-                            "computerVisionBaseUrl": f'https://{self.azure_computer_vision_endpoint}/computervision', # your endpoint should look like the following https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com/computervision
-                            "computerVisionApiKey": self.azure_computer_vision_key,
-                            "indexName": self.azure_computer_vision_index_name,
-                            "videoUrls": [url_video],
-                        }
-                    }],
-                "enhancements": {
-                    "video": {
-                        "enabled": True
-                    }
-                }
-            },
-            max_tokens=100
-        )
-        return response
+        return {index_dict['name'] for index_dict in response_json['value']}
 
     def _ask_one_question(self, acv_document_id: str, question: str, url_video: str, timeout: int) -> dict:
         '''
@@ -432,7 +407,8 @@ class AzureVideoQA:
                 'parameters': {
                     'computerVisionBaseUrl': f'https://{self.azure_computer_vision_endpoint}/computervision',
                     'computerVisionApiKey': self.azure_computer_vision_key,
-                    'indexName': self.azure_computer_vision_index_name,
+                    # 'indexName': acv_document_id,
+                    'indexName': acv_document_id,
                     'videoUrls': [url_video],
                     'roleInformation': roleInformation,
                 },
@@ -510,7 +486,7 @@ class AzureVideoQA:
             raise SystemExit(f'Failed to make the request for acv_document_id={acv_document_id}. Error: {e}') from e
         return response
 
-    def ask_questions_one_video(self, video_id: str, url_video: str, questions: list[dict], timeout: int, sleep_seconds: int) -> tuple[list[dict], list[dict]]:
+    def ask_questions_one_video(self, video_id: str, url_video: str, questions: list[dict], timeout: int, sleep_seconds: int, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index: bool) -> tuple[list[dict], list[dict]]:
         '''
         Load questions from file
 
@@ -523,22 +499,32 @@ class AzureVideoQA:
         Returns:
             dict: _description_
         '''
+        acv_document_id = f'i{video_id}'
+        # Case 1: the video has never been ingested. The index doesn't exist
+        if acv_document_id not in self.get_video_indices():
+            self.create_video_index(acv_document_id)
+            self.ingest_video_with_retries(video_id, url_video, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=False)
+
         successes, failures, requests = [], [], []
         _ask_one_question = self._ask_one_question
         for question in (pbar_question := tqdm(questions, leave=False)):
             pbar_question.set_description(f"ask_questions: Processing question {question['q']}")
             try:
-                response = _ask_one_question(video_id, question['q'], url_video, timeout)
+                response = _ask_one_question(acv_document_id, question['q'], url_video, timeout)
             except RequestException:
-                failures.append((video_id, question))
-                requests.append((video_id, question))
+                failures.append((acv_document_id, question))
+                requests.append((acv_document_id, question))
                 continue
             if response.status_code == 500:
-                failures.append((video_id, question))
-                requests.append((video_id, question))
+                failures.append((acv_document_id, question))
+                requests.append((acv_document_id, question))
                 continue
-            if 'Document does not exist' in response.text:
-                failures.append(response)
+            # Case 2: the video has been successfully ingested but it's not available. In this case, recreate the index and reingest the video.
+            if 'document does not exist' in response.text.lower():
+                # failures.append(response)
+                pbar_video.write(f'document does not exist for video={video_id}. Ingesting')
+                self.ingest_video_with_retries(video_id, url_video, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=True)
+                return self.ask_questions_one_video(video_id, url_video, questions, timeout, sleep_seconds, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index)
             else:
                 successes.append(response)
             requests.append(response.request)
@@ -547,6 +533,33 @@ class AzureVideoQA:
             sleep(sleep_seconds)
         # print(f'ask_questions: DONE. video_id={video_id}. len(successes)={len(successes)}. len(failures)={len(failures)}')
         return successes, failures, requests
+
+    def ingest_video_with_retries(self, video_id: str, url_video: str, max_retries: int, pbar_video, failed_ingestions: list, delete_and_recreate_index: bool):
+        ingest_video = self.ingest_video
+        get_ingestion_status = self.get_ingestion_status
+        acv_document_id = f'i{video_id}'
+        if delete_and_recreate_index:
+            pbar_video.write(f"Deleting and recreating index for video {video_id}")
+            self.delete_ingestion_index(acv_document_id)
+            sleep(10)
+        response, acv_document_id = ingest_video(video_id, url_video)
+        # pbar_video.write("Ingesting video...")
+        # url_video = dict_video_stem_url[video_id]
+        # acv_document_id = f'i{video_id}'
+        ingestion_status_video = get_ingestion_status(acv_document_id)
+        trys = 0
+        while ingestion_status_video != 'Completed':
+            if trys >= max_retries:
+                pbar_video.write(f"Exceeded max_retries={max_retries} while ingesting video {acv_document_id}. Got status={ingestion_status_video}")
+                failed_ingestions.append((acv_document_id, ingestion_status_video, response))
+                break
+            # print(f'{acv_document_id}: ingestion_status_video={ingestion_status_video}')
+            sleep(1)
+            ingestion_status_video = get_ingestion_status(acv_document_id)
+            if ingestion_status_video == 'Running':
+                trys += 0.1
+            else:
+                trys += 1
 
     def ask_questions_all_videos(self, dict_video_name_url: dict, sleep_seconds: int=10, timeout: int=TIMEOUT, videos_max: int=-1) -> list[dict]:
         '''
@@ -575,10 +588,8 @@ class AzureVideoQA:
         len_video_keys_existing = len(video_keys_existing)
         total = len_video_keys_existing if videos_max < 0 else min(len_video_keys_existing, videos_max)
         # for video_id in (pbar_video := tqdm(video_keys_existing, total=total)):
-        get_ingestion_status = self.get_ingestion_status
-        ingest_video = self.ingest_video
         dirname_result = 'result'
-        max_retrys = 10
+        max_retries = 10
         failed_ingestions = []
 
         # with open('final_dict.pkl', 'rb') as f:
@@ -599,24 +610,6 @@ class AzureVideoQA:
             #     continue
             # print(f'Found video_id: {video_id}. num_found={len(responses)+1}')
             url_video = dict_video_name_url[video_id]
-            response, acv_document_id = ingest_video(video_id, url_video)
-            # pbar_video.write("Ingesting video...")
-            # url_video = dict_video_stem_url[video_id]
-            # acv_document_id = f'i{video_id}'
-            ingestion_status_video = get_ingestion_status(acv_document_id)
-            trys = 0
-            while ingestion_status_video != 'Completed':
-                if trys >= max_retrys:
-                    pbar_video.write(f"Problem ingesting video {acv_document_id}. Got status={ingestion_status_video}")
-                    failed_ingestions.append((acv_document_id, ingestion_status_video, response))
-                    break
-                # print(f'{acv_document_id}: ingestion_status_video={ingestion_status_video}')
-                sleep(1)
-                ingestion_status_video = get_ingestion_status(acv_document_id)
-                if ingestion_status_video == 'Running':
-                    trys += 0.1
-                else:
-                    trys += 1
             # pbar_video.write("Done ingesting video")
             # match ingestion_status_video:
             #     case 'Completed':
@@ -627,8 +620,9 @@ class AzureVideoQA:
             #     case _:
             #         raise ValueError(f'ingestion_status_video={ingestion_status_video}')
             # sleep(2)
+
             questions = [questions[0]] + questions
-            successes, failures, requests = ask_questions_one_video(acv_document_id, url_video, questions, timeout, sleep_seconds)
+            successes, failures, requests = ask_questions_one_video(video_id, url_video, questions, timeout, sleep_seconds, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=False)
             dict_current_video = {'video_id': video_id, 'successes': successes, 'failures': failures, 'requests': requests}
             result_dict[video_id] = dict_current_video
             # for question in (pbar_question := tqdm(questions, leave=False)):
