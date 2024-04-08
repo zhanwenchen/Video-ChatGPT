@@ -3,20 +3,14 @@ from os import access as os_access, W_OK as os_W_OK
 from os.path import exists as os_path_exists, join as os_path_join, basename as os_path_basename, dirname as os_path_dirname, isdir as os_path_isdir
 from glob import glob as glob_glob
 from json import load as json_load, dump as json_dump
-from json.decoder import JSONDecodeError
 from collections import defaultdict
 from pathlib import Path
 from time import sleep
-# from urllib.parse import unquote
-from pickle import dump as pickle_dump, load as pickle_load
+from pickle import dump as pickle_dump
 from httpx import get as httpx_get
 from requests import post as requests_post, put as requests_put, delete as requests_delete, RequestException
-from tqdm import tqdm
 from tqdm.notebook import tqdm  # pip install ipywidgets
-# from tqdm.contrib import tenumerate
 from azure.storage.blob import BlobServiceClient
-# from config import get_cfg_defaults
-# from curlify import to_curl
 from openai import AzureOpenAI
 
 
@@ -95,7 +89,6 @@ class AzureVideoQA:
         # 2. Set up Azure Computer Vision
         self.azure_computer_vision_endpoint = config.AZURE_COMPUTER_VISION.ENDPOINT_DOMAIN
         self.azure_computer_vision_key = config.AZURE_COMPUTER_VISION.KEY
-        self.azure_computer_vision_index_name = config.AZURE_COMPUTER_VISION.VIDEO_INDEX_NAME
 
         # 1. Set up Azure OpenAI
         self.azure_openai_endpoint = config.AZURE_OPENAI.ENDPOINT_DOMAIN
@@ -107,8 +100,6 @@ class AzureVideoQA:
             api_version="2023-12-01-preview",
             azure_endpoint=f"https://{self.azure_openai_endpoint}/openai/deployments/gpt4v/extensions/chat/completions"
         )
-
-        # deployment_name='REPLACE_WITH_YOUR_DEPLOYMENT_NAME' #This will correspond to the custom name you chose for your deployment when you deployed a model. Use a gpt-35-turbo-instruct deployment.
 
     def _get_azure_blob_storage_container_client(self):
         azure_blob_storage_container_name = self.azure_blob_storage_container_name
@@ -168,8 +159,8 @@ class AzureVideoQA:
 
         return dict_video_name_url
 
-    def create_video_index(self):
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}'
+    def create_video_index(self, acv_document_id: str):
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}'
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
@@ -185,115 +176,49 @@ class AzureVideoQA:
         response = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         response_json = response.json()
         if 'error' in response_json:
-            assert response_json['error']['code'] == 'AlreadyExists'
-            print(f'Index {self.azure_computer_vision_index_name} already exists')
+            try:
+                assert response_json['error']['code'] == 'AlreadyExists'
+            except:
+                raise SystemExit(f'Failed to create index. Error: {response_json}') from None
+            print(f'Index {acv_document_id} already exists')
         return response_json
 
-    def delete_ingestion_index(self) -> None:
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}'
+    def delete_ingestion_index(self, acv_document_id) -> None:
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}'
         params = {'api-version': '2023-05-01-preview'}
         headers = {'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key}
         response = requests_delete(url, params=params, headers=headers, timeout=TIMEOUT)
         assert response.status_code == 204
 
+    def delete_all_ingestion_index(self) -> None:
+        indices = self.get_video_indices()
+        return [self.delete_ingestion_index(index) for index in indices]
+
     def ingest_video(self, video_name: str, video_url: dict):
+        acv_document_id = f'i{Path(video_name).stem}'
+        # If the index doesn't exist, the problem is likely that the video has never been ingested.
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        acv_document_id = f'i{Path(video_name).stem}'
         video = {
             'mode': 'add',  # Must correspond to acv_document_id exactly.
             'documentId': acv_document_id,
             'documentUrl': video_url,
         }
         data = {'videos': [video], 'includeSpeechTranscript': True}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}/ingestions/{acv_document_id}'
         try:
             response_batch = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         except RequestException as e:
-            # print(f'request = {to_curl(response_batch.request, pretty=True)}')
             raise SystemExit(f'Failed to make the request={data}. Error: {e}') from e
 
-        # print(response_batch.text)
         try:
             response_batch.raise_for_status()
         except Exception as e:
-            # print(response_batch.request.text)
-            # print(f'request = {to_curl(response_batch.request, pretty=True)}')
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
-        # responses_jsons.append(response_batch.json())
-        # sleep(0.5)
         return response_batch, acv_document_id
-
-    def delete_ingest_video(self, video_name: str, video_url: dict):
-        headers = {
-            'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
-            'Content-Type': 'application/json',
-        }
-        params = {'api-version': '2023-05-01-preview'}
-        acv_document_id = f'i{Path(video_name).stem}'
-        video = {
-            'mode': 'add',  # Must correspond to acv_document_id exactly.
-            'documentId': acv_document_id,
-            'documentUrl': video_url,
-        }
-        data = {'videos': [video]}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
-        try:
-            response_batch = requests_delete(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
-        except RequestException as e:
-            # print(f'request = {to_curl(response_batch.request, pretty=True)}')
-            raise SystemExit(f'Failed to make the request. Error: {e}') from e
-
-        # print(response_batch.text)
-        try:
-            response_batch.raise_for_status()
-        except Exception as e:
-            # print(response_batch.request.text)
-            # print(f'request = {to_curl(response_batch.request, pretty=True)}')
-            raise SystemExit(f'Failed to make the request. Error: {e}') from e
-        # responses_jsons.append(response_batch.json())
-        # sleep(0.5)
-        return response_batch, acv_document_id
-
-    def ingest_videos(self, dict_video_name_url: dict) -> list[dict]:
-        videos = [{
-            'mode': 'add',
-            'documentId': f'i{Path(video_name).stem}', # Must correspond to acv_document_id exactly.
-            'documentUrl': video_url,
-        } for video_name, video_url in dict_video_name_url.items()]
-        headers = {
-            'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
-            'Content-Type': 'application/json',
-        }
-        params = {'api-version': '2023-05-01-preview'}
-        responses_jsons = []
-        azure_computer_vision_endpoint = self.azure_computer_vision_endpoint
-        azure_computer_vision_index_name = self.azure_computer_vision_index_name
-        # for i, videos_batch in tenumerate(batched(videos, batch_size)):
-        for video in (pbar := tqdm(videos)):
-            data = {'videos': [video]}
-            acv_document_id = video['documentId']
-            pbar.set_description(f"ingest_videos: Processing {acv_document_id}")
-            url = f'https://{azure_computer_vision_endpoint}/computervision/retrieval/indexes/{azure_computer_vision_index_name}/ingestions/{acv_document_id}'
-            try:
-                response_batch = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
-            except RequestException as e:
-                # print(f'request = {to_curl(response_batch.request, pretty=True)}')
-                raise SystemExit(f'Failed to make the request. Error: {e}') from e
-
-            # print(response_batch.text)
-            try:
-                response_batch.raise_for_status()
-            except Exception as e:
-                # print(response_batch.request.text)
-                # print(f'request = {to_curl(response_batch.request, pretty=True)}')
-                raise SystemExit(f'Failed to make the request. Error: {e}') from e
-            responses_jsons.append(response_batch.json())
-            sleep(0.5)
-        return responses_jsons
 
     def get_ingestion_status(self, acv_document_id: str):
         '''
@@ -311,13 +236,12 @@ class AzureVideoQA:
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions/{acv_document_id}'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}/ingestions/{acv_document_id}'
         try:
             response = httpx_get(url, params=params, headers=headers, timeout=TIMEOUT)
         except RequestException as e:
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
 
-        # print(response.text)
         try:
             response.raise_for_status()
         except Exception as e:
@@ -327,7 +251,7 @@ class AzureVideoQA:
         state = response_json['state']
         return state
 
-    def get_ingestion_statuses(self) -> dict:
+    def get_video_indices(self) -> set[str]:
         '''
         _summary_
 
@@ -335,70 +259,37 @@ class AzureVideoQA:
             SystemExit: _description_
 
         Returns:
-            dict: JSON representation of the status of all ingestions for the index
+            set[str]: {
+                        '0k3gj5ybo67',
+                        '14yz2qkzve1',
+                        '3q9c1zkwm3u',
+                        '5t70tei07fa',
+                        '68n38j1dxty',
+                        '7pbbj26od1b',
+                        '857dn4t913p',
+                        '9cjfic15jdu',
+                        'bn14yjdtf3j',
+                        'c8zigj16a16'
+                      }
         '''
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{self.azure_computer_vision_index_name}/ingestions'
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes'
         try:
             response = httpx_get(url, params=params, headers=headers, timeout=TIMEOUT)
         except RequestException as e:
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
 
-        print(response.text)
         try:
             response.raise_for_status()
         except Exception as e:
             print(response.request.text)
             raise SystemExit(f'Failed to make the request. Error: {e}') from e
         response_json = response.json()
-        return response_json
-
-    def _ask_one_question_new(self, acv_document_id: str, question: str, url_video: str, timeout: int):
-
-        # Send a completion call to generate an answer
-        print('Sending a test completion job')
-        # start_phrase = 'Write a tagline for an ice cream shop. '
-        # response = client.completions.create(model=deployment_name, prompt=start_phrase, max_tokens=10)
-        # print(start_phrase+response.choices[0].text)
-        response = self.azure_openai_client.chat.completions.create(
-            model=self.azure_openai_deployment,
-            messages=[
-                { "role": "system", "content": "You are a helpful assistant." },
-                { "role": "user", "content": [
-                    {
-                        "type": "acv_document_id",
-                        "acv_document_id": acv_document_id,
-                    },
-                    {
-                        "type": "text",
-                        "text": "Describe this video:"
-                    }
-                ] }
-            ],
-            extra_body={
-                "dataSources": [
-                    {
-                        "type": "AzureComputerVisionVideoIndex",
-                        "parameters": {
-                            "computerVisionBaseUrl": f'https://{self.azure_computer_vision_endpoint}/computervision', # your endpoint should look like the following https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com/computervision
-                            "computerVisionApiKey": self.azure_computer_vision_key,
-                            "indexName": self.azure_computer_vision_index_name,
-                            "videoUrls": [url_video],
-                        }
-                    }],
-                "enhancements": {
-                    "video": {
-                        "enabled": True
-                    }
-                }
-            },
-            max_tokens=100
-        )
-        return response
+        return {index_dict['name'] for index_dict in response_json['value']}
 
     def _ask_one_question(self, acv_document_id: str, question: str, url_video: str, timeout: int) -> dict:
         '''
@@ -414,7 +305,7 @@ class AzureVideoQA:
         Returns:
             dict: _description_
         '''
-        assert acv_document_id.startswith('i') # and not acv_document_id.startswith('ii')
+        assert acv_document_id.startswith('i')
 
         url_gpt4v_endpoint = f"https://{self.azure_openai_endpoint}/openai/deployments/gpt4v/extensions/chat/completions"
         api_version = '2023-07-01-preview'
@@ -422,7 +313,6 @@ class AzureVideoQA:
             "Content-Type": "application/json",
             "api-key": self.azure_openai_key,
             "chatgpt_url": f'{url_gpt4v_endpoint}?api-version={api_version}',
-            # 'accept': 'application/json',
         }
         params = {'api-version': api_version}
         roleInformation = "Please analyze the visual and audio information in the uploaded video and output the relevance of each video frame to a given question requiring theory-of-mind reasoning of the video. The output format needs to be a Pythoon dictionary of timestamp: relevance score (a floating value between 0.0 and 1.0, 1.0 meaning highly relevant), each line followed by a Python comment containing the rationale behind the score."
@@ -432,7 +322,7 @@ class AzureVideoQA:
                 'parameters': {
                     'computerVisionBaseUrl': f'https://{self.azure_computer_vision_endpoint}/computervision',
                     'computerVisionApiKey': self.azure_computer_vision_key,
-                    'indexName': self.azure_computer_vision_index_name,
+                    'indexName': acv_document_id.replace('_', 'underscore'),
                     'videoUrls': [url_video],
                     'roleInformation': roleInformation,
                 },
@@ -457,15 +347,6 @@ class AzureVideoQA:
                         }
                     ]
                 },
-                # {
-                #     "role": "assistant",
-                #     "content": [
-                #         {
-                #                 "type": "text",
-                #                 "text": "{\"00:00:06.0050000\": 0.1,  # Older woman not in focus, no interaction shown.\\\n                                      \"00:00:15.0130000\": 0.2,  # Older woman is present but no interaction yet.\\\n                                      \"00:00:16.0130000\": 0.2,  # Still no interaction, relevance is low.\\\n                                      \"00:00:17.0140000\": 0.2,  # Older woman in frame but not reacting.\\\n                                      \"00:00:18.0150000\": 0.2,  # No clear reaction from the older woman.\\\n                                      \"00:00:19.0160000\": 0.2,  # Older woman visible, no interaction observed.\\\n                                      \"00:00:20.0170000\": 0.2,  # Older woman in frame, still no reaction.\\\n                                      \"00:00:22.0180000\": 0.2,  # Older woman in view, no visible reaction.\\\n                                      \"00:00:24.0200000\": 0.3,  # Older woman is visible, potential lead-up to interaction.\\\n                                      \"00:00:30.0250000\": 0.4,  # Woman in white approaches fridge, older woman\\'s reaction may start soon.\\\n                                      \"00:00:31.0260000\": 0.5,  # Older woman is in focus, beginning of interaction.\\\n                                      \"00:00:37.0310000\": 0.7,  # Older woman starts to react, more relevant to the question.\\\n                                      \"00:00:38.0320000\": 0.8,  # Older woman\\'s body language starts showing her feelings.\\\n                                      \"00:00:39.0330000\": 0.9,  # Older woman\\'s body language clearly shows her feelings.\\\n                                      \"00:00:40.0330000\": 1.0,  # Older woman\\'s reaction is fully visible and directly relevant to the question.\\\n                                      \"00:00:41.0340000\": 0.9,  # Continuation of the older woman\\'s reaction.\\\n                                      \"00:00:43.0360000\": 0.8,  # Older woman\\'s reaction is still ongoing, slightly less relevant as it\\'s not a new response.\\\n                                      \"00:00:48.0400000\": 0.7,  # Older woman\\'s reaction is winding down, less relevant.\\\n                                      \"00:00:49.0410000\": 0.6,  # Interaction concluding, relevance to feelings decreasing.\\\n                                      \"00:00:50\": 0.5,  # Interaction is over, relevance to the question is moderate.}"
-                #         }
-                #     ]
-                # },
                 {
                     "role": "assistant",
                     "content": [
@@ -488,16 +369,6 @@ class AzureVideoQA:
                         }
                     ]
                 },
-                # {
-                # 'role': 'user',
-                # 'content': [{
-                #     'type': 'acv_document_id',
-                #     # 'acv_document_id': f'i{video_id.lower()}',
-                #     'acv_document_id': acv_document_id,
-                # }, {
-                #     'type': 'text',
-                #     'text': f'{PROMPT_BEFORE}"{question}"{PROMPT_AFTER}',
-                # }],
             ],
             'temperature': 0.7,
             'top_p': 0.95,
@@ -510,7 +381,7 @@ class AzureVideoQA:
             raise SystemExit(f'Failed to make the request for acv_document_id={acv_document_id}. Error: {e}') from e
         return response
 
-    def ask_questions_one_video(self, video_id: str, url_video: str, questions: list[dict], timeout: int, sleep_seconds: int) -> tuple[list[dict], list[dict]]:
+    def ask_questions_one_video(self, video_id: str, url_video: str, questions: list[dict], timeout: int, sleep_seconds: int, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index: bool) -> tuple[list[dict], list[dict]]:
         '''
         Load questions from file
 
@@ -523,30 +394,61 @@ class AzureVideoQA:
         Returns:
             dict: _description_
         '''
+        acv_document_id = f'i{video_id}'
+        # Case 1: the video has never been ingested. The index doesn't exist
+        if acv_document_id not in self.get_video_indices():
+            self.create_video_index(acv_document_id)
+            self.ingest_video_with_retries(video_id, url_video, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=False)
+
         successes, failures, requests = [], [], []
         _ask_one_question = self._ask_one_question
         for question in (pbar_question := tqdm(questions, leave=False)):
             pbar_question.set_description(f"ask_questions: Processing question {question['q']}")
             try:
-                response = _ask_one_question(video_id, question['q'], url_video, timeout)
+                response = _ask_one_question(acv_document_id, question['q'], url_video, timeout)
             except RequestException:
-                failures.append((video_id, question))
-                requests.append((video_id, question))
+                failures.append((acv_document_id, question))
+                requests.append((acv_document_id, question))
                 continue
             if response.status_code == 500:
-                failures.append((video_id, question))
-                requests.append((video_id, question))
+                failures.append((acv_document_id, question))
+                requests.append((acv_document_id, question))
                 continue
-            if 'Document does not exist' in response.text:
-                failures.append(response)
+            # Case 2: the video has been successfully ingested but it's not available. In this case, recreate the index and reingest the video.
+            if 'document does not exist' in response.text.lower():
+                pbar_video.write(f'document does not exist for video={video_id}. Ingesting')
+                self.ingest_video_with_retries(video_id, url_video, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=True)
+                return self.ask_questions_one_video(video_id, url_video, questions, timeout, sleep_seconds, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index)
             else:
                 successes.append(response)
             requests.append(response.request)
 
             # count += 1
             sleep(sleep_seconds)
-        # print(f'ask_questions: DONE. video_id={video_id}. len(successes)={len(successes)}. len(failures)={len(failures)}')
         return successes, failures, requests
+
+    def ingest_video_with_retries(self, video_id: str, url_video: str, max_retries: int, pbar_video, failed_ingestions: list, delete_and_recreate_index: bool):
+        ingest_video = self.ingest_video
+        get_ingestion_status = self.get_ingestion_status
+        acv_document_id = f'i{video_id}'
+        if delete_and_recreate_index:
+            pbar_video.write(f"Deleting and recreating index for video {video_id}")
+            self.delete_ingestion_index(acv_document_id)
+            sleep(10)
+        response, acv_document_id = ingest_video(video_id, url_video)
+        ingestion_status_video = get_ingestion_status(acv_document_id)
+        trys = 0
+        while ingestion_status_video != 'Completed':
+            if trys >= max_retries:
+                pbar_video.write(f"Exceeded max_retries={max_retries} while ingesting video {acv_document_id}. Got status={ingestion_status_video}")
+                failed_ingestions.append((acv_document_id, ingestion_status_video, response))
+                break
+            sleep(1)
+            ingestion_status_video = get_ingestion_status(acv_document_id)
+            if ingestion_status_video == 'Running':
+                trys += 0.1
+            else:
+                trys += 1
 
     def ask_questions_all_videos(self, dict_video_name_url: dict, sleep_seconds: int=10, timeout: int=TIMEOUT, videos_max: int=-1) -> list[dict]:
         '''
@@ -563,28 +465,19 @@ class AzureVideoQA:
         '''
         # 1. Load the questions from file
         dict_video_qa_merged = self.merge_and_save_multiple_dicts()
-        # _ask_one_question = self._ask_one_question
-        # responses = []
-        # failed = []
-        # num_skipped = 0
-        # dict_video_stem_url = {Path(video_name).stem: video_url for video_name, video_url in dict_video_name_url.items()}
         video_keys_existing = dict_video_qa_merged.keys() & dict_video_name_url.keys()
-        # count = 0
         ask_questions_one_video = self.ask_questions_one_video
         result_dict = {}
         len_video_keys_existing = len(video_keys_existing)
         total = len_video_keys_existing if videos_max < 0 else min(len_video_keys_existing, videos_max)
-        # for video_id in (pbar_video := tqdm(video_keys_existing, total=total)):
-        get_ingestion_status = self.get_ingestion_status
-        ingest_video = self.ingest_video
         dirname_result = 'result'
-        max_retrys = 10
+        max_retries = 10
         failed_ingestions = []
 
-        # with open('final_dict.pkl', 'rb') as f:
-        #     dict_final_dict = pickle_load(f)
+        video_keys_incomplete = {video_key_existing for video_key_existing in video_keys_existing if not os_path_exists(os_path_join(dirname_result, f'{video_key_existing}.pkl'))}
+        print(f'There are {len(video_keys_incomplete)} incomplete keys out of {len(video_keys_existing)}')
 
-        for i, video_id in (pbar_video := tqdm(enumerate(video_keys_existing), total=total)):
+        for i, video_id in (pbar_video := tqdm(enumerate(video_keys_existing), total=min(total, len(video_keys_incomplete)))):
             if i >= total:
                 break
             if os_path_exists(os_path_join(dirname_result, f'{video_id}.pkl')):
@@ -593,72 +486,17 @@ class AzureVideoQA:
                 # continue
             pbar_video.set_description(f"ask_questions: Processing video {i}/{total}: {video_id}")
             questions = dict_video_qa_merged[video_id]
-            # if video_id not in dict_video_stem_url:
-            #     num_skipped += 1
-            #     print(f'Skipping video_id: {video_id} because the video is missing. num_skipped={num_skipped}')
-            #     continue
-            # print(f'Found video_id: {video_id}. num_found={len(responses)+1}')
             url_video = dict_video_name_url[video_id]
-            response, acv_document_id = ingest_video(video_id, url_video)
-            # pbar_video.write("Ingesting video...")
-            # url_video = dict_video_stem_url[video_id]
-            # acv_document_id = f'i{video_id}'
-            ingestion_status_video = get_ingestion_status(acv_document_id)
-            trys = 0
-            while ingestion_status_video != 'Completed':
-                if trys >= max_retrys:
-                    pbar_video.write(f"Problem ingesting video {acv_document_id}. Got status={ingestion_status_video}")
-                    failed_ingestions.append((acv_document_id, ingestion_status_video, response))
-                    break
-                # print(f'{acv_document_id}: ingestion_status_video={ingestion_status_video}')
-                sleep(1)
-                ingestion_status_video = get_ingestion_status(acv_document_id)
-                if ingestion_status_video == 'Running':
-                    trys += 0.1
-                else:
-                    trys += 1
-            # pbar_video.write("Done ingesting video")
-            # match ingestion_status_video:
-            #     case 'Completed':
-            #         print(f'{acv_document_id}: Completed')
-            #         pass
-            #     case 'Running':
-            #         sleep(60)
-            #     case _:
-            #         raise ValueError(f'ingestion_status_video={ingestion_status_video}')
-            # sleep(2)
+
             questions = [questions[0]] + questions
-            successes, failures, requests = ask_questions_one_video(acv_document_id, url_video, questions, timeout, sleep_seconds)
+            successes, failures, requests = ask_questions_one_video(video_id, url_video, questions, timeout, sleep_seconds, max_retries, pbar_video, failed_ingestions, delete_and_recreate_index=False)
             dict_current_video = {'video_id': video_id, 'successes': successes, 'failures': failures, 'requests': requests}
             result_dict[video_id] = dict_current_video
-            # for question in (pbar_question := tqdm(questions, leave=False)):
-            #     pbar_question.set_description(f"ask_questions: Processing question {question['q']}")
-
-            #     if count >= questions_max and questions_max > 0:
-            #         print(f'ask_questions: DONE. len(responses)={len(responses)}. len(responses)={len(failed)}')
-            #         return responses, failed
-            #     try:
-            #         response = _ask_one_question(video_id, question['q'], url_video, timeout)
-            #     except RequestException:
-            #         failed.append((video_id, question))
-
-            #     if 'Document does not exist' in response.text:
-            #         failed.append(response)
-            #     else:
-            #         responses.append(response)
-
-            #     count += 1
-            #     # failed.append(response)
-            #     # breakpoint()
-            #     sleep(sleep_seconds)
-            #     # responses.append(response)
-            # sleep(sleep_seconds)
             if len(successes) == 0:
                 video_id += '_failed'
             with open(f'./result/{video_id}.pkl', 'wb') as f:
                 pickle_dump(dict_current_video, f)
 
-        # print(f'ask_questions: DONE. len(responses)={len(responses)}. len(responses)={len(failed)}')
         result_dict['failed_ingestions'] = failed_ingestions
         return result_dict
 
@@ -677,49 +515,3 @@ class AzureVideoQA:
         with open(self.fpath_qa_json_merged_to_save, 'w') as file_out:
             json_dump(dict_vqa_merged, file_out, indent=4)
         return dict_vqa_merged
-
-# def main():
-#     cfg = get_cfg_defaults()
-#     cfg.freeze()
-#     print(cfg)
-
-#     azure_qa = AzureVideoQA(cfg)
-
-
-# if __name__ == '__main__':
-#     main()
-
-
-# data: {"choices":[{"messages":[{"delta":{"role":"tool", "content": "Retrieving frames from your video"}}]}]}
-
-# data: {"choices":[{"messages":[{"delta":{"role":"tool", "content": "Found following frames from your video: { 00:00:47.0390000, }"}}]}]}
-
-# ﻿data: {"id":"","object":"","created":0,"model":"","prompt_filter_results":[{"prompt_index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}}}],"choices":[]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{},"messages":[{"delta":{"role":"assistant","content":null}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":"I"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":"'m"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" sorry"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":","}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" I"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" cannot"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" assist"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" with"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" that"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":" request"}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":null,"index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}},"messages":[{"delta":{"content":"."}}]}]}
-
-# data: {"id":"chatcmpl-8zf64GnBNLPlvAtoo0jr0RD4uy4pB","object":"chat.completion.chunk","created":1709706676,"model":"gpt-4","choices":[{"finish_reason":"stop","index":0,"content_filter_results":{},"messages":[{"delta":{"content":null}}]}]}
-
-# data: [DONE]
