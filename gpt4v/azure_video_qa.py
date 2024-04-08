@@ -425,7 +425,7 @@ class AzureVideoQA:
             # 'accept': 'application/json',
         }
         params = {'api-version': api_version}
-        roleInformation = 'You are an AI assistant that helps people find information related to videos and theory of mind.'
+        roleInformation = "Please analyze the visual and audio information in the uploaded video and output the relevance of each video frame to a given question requiring theory-of-mind reasoning of the video. The output format needs to be a Pythoon dictionary of timestamp: relevance score (a floating value between 0.0 and 1.0, 1.0 meaning highly relevant), each line followed by a Python comment containing the rationale behind the score."
         json_data = {
             'dataSources': [{
                 'type': 'AzureComputerVisionVideoIndex',
@@ -443,8 +443,8 @@ class AzureVideoQA:
                     "role": "system",
                     "content": [
                         {
-                            "type": "text",
-                            "text": "Please analyze the visual and audio information in the uploaded video and output the relevance of each video frame to a given question requiring theory-of-mind reasoning of the video. The output format needs to be a Pythoon dictionary of timestamp: relevance score (a floating value between 0.0 and 1.0, 1.0 meaning highly relevant), each line followed by a Python comment containing the rationale behind the score."
+                                "type": "text",
+                                "text": roleInformation
                         }
                     ]
                 },
@@ -452,33 +452,20 @@ class AzureVideoQA:
                     "role": "user",
                     "content": [
                         {
-                            "type": "text",
-                            "text": "How relevant is each video frame to answering the question: \"How does the older woman feel when the woman in white starts throwing out her food?\"? Please output a dictionary of each video frame to its corresponding relevance score between 0.0 and 1.0 to the given question."
+                                "type": "text",
+                                "text": "Suppose you are given a 60-second video where a woman is throwing out her mother's food. How relevant is each video frame to answering the question: \"How does the older woman feel when the woman in white starts throwing out her food?\"? Please output a dictionary of each video frame to its corresponding relevance score between 0.0 and 1.0 to the given question. How relevant is each video frame to answering the question: \"How does the older woman feel when the woman in white starts throwing out her food?\"? Please output a dictionary of each video frame to its corresponding relevance score between 0.0 and 1.0 to the given question."
                         }
                     ]
                 },
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "{  \n  \"00:00:06.005\": 0.0, # No interaction related to throwing out food yet.  \n  \"00:00:15.013\": 0.2, # Older woman is present, potential buildup to the event.  \n  \"00:00:16.013\": 0.2, # Continuation of the previous frame, still no clear reaction.  \n  \"00:00:17.014\": 0.2, # Similar to previous frames, no change in situation.  \n  \"00:00:18.015\": 0.2, # Same as above, no visible reaction to the event.  \n  \"00:00:19.016\": 0.2, # No visible change in the situation or reaction.  \n  \"00:00:20.017\": 0.2, # Still no action regarding the food throwing.  \n  \"00:00:22.018\": 0.2, # Scene continues without change in the older woman’s status.  \n  \"00:00:24.020\": 0.5, # The woman in white is near the fridge, indicating the event might start soon.  \n  \"00:00:30.025\": 0.5, # The woman in white is interacting with the fridge, which may lead to the event.  \n  \"00:00:31.026\": 0.7, # The older woman has a clear reaction, indicating the event has begun.  \n  \"00:00:37.031\": 0.8, # Direct interaction between the two characters, relevant to the event.  \n  \"00:00:38.032\": 1.0, # The older woman’s reaction is visible as the woman in white holds the food.  \n  \"00:00:39.033\": 1.0, # Continuation of the highly relevant interaction.  \n  \"00:00:40.033\": 1.0, # Ongoing relevant interaction depicting the older woman's feelings.  \n  \"00:00:41.034\": 1.0, # Direct confrontation about the food, highly relevant.  \n  \"00:00:43.036\": 1.0, # The interaction continues, showing the older woman's feelings.  \n  \"00:00:48.040\": 0.8, # The event is concluding but still shows the older woman's reaction.  \n  \"00:00:49.041\": 0.8, # The aftermath of the event, still relevant to the older woman's feelings.  \n  \"00:00:50\": 0.7, # The situation is cooling down, but the older woman's feelings might still be deduced.  \n} "
-                        }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "acv_document_id",
-                            "acv_document_id": "AOAIChatDocument"
-                        },
-                        {
-                            "type": "text",
-                            "text": "\nHow relevant is each video frame to answering the question: \"How does the older woman feel when the woman in white starts throwing out her food?\"? Please output a dictionary of each video frame to its corresponding relevance score between 0.0 and 1.0 to the given question. How relevant is each video frame to answering the question: \"How does the older woman feel when the woman in white starts throwing out her food?\"? Please output a dictionary of each video frame to its corresponding relevance score between 0.0 and 1.0 to the given question.\n"
-                        }
-                    ]
-                },
+                # {
+                #     "role": "assistant",
+                #     "content": [
+                #         {
+                #                 "type": "text",
+                #                 "text": "{\"00:00:06.0050000\": 0.1,  # Older woman not in focus, no interaction shown.\\\n                                      \"00:00:15.0130000\": 0.2,  # Older woman is present but no interaction yet.\\\n                                      \"00:00:16.0130000\": 0.2,  # Still no interaction, relevance is low.\\\n                                      \"00:00:17.0140000\": 0.2,  # Older woman in frame but not reacting.\\\n                                      \"00:00:18.0150000\": 0.2,  # No clear reaction from the older woman.\\\n                                      \"00:00:19.0160000\": 0.2,  # Older woman visible, no interaction observed.\\\n                                      \"00:00:20.0170000\": 0.2,  # Older woman in frame, still no reaction.\\\n                                      \"00:00:22.0180000\": 0.2,  # Older woman in view, no visible reaction.\\\n                                      \"00:00:24.0200000\": 0.3,  # Older woman is visible, potential lead-up to interaction.\\\n                                      \"00:00:30.0250000\": 0.4,  # Woman in white approaches fridge, older woman\\'s reaction may start soon.\\\n                                      \"00:00:31.0260000\": 0.5,  # Older woman is in focus, beginning of interaction.\\\n                                      \"00:00:37.0310000\": 0.7,  # Older woman starts to react, more relevant to the question.\\\n                                      \"00:00:38.0320000\": 0.8,  # Older woman\\'s body language starts showing her feelings.\\\n                                      \"00:00:39.0330000\": 0.9,  # Older woman\\'s body language clearly shows her feelings.\\\n                                      \"00:00:40.0330000\": 1.0,  # Older woman\\'s reaction is fully visible and directly relevant to the question.\\\n                                      \"00:00:41.0340000\": 0.9,  # Continuation of the older woman\\'s reaction.\\\n                                      \"00:00:43.0360000\": 0.8,  # Older woman\\'s reaction is still ongoing, slightly less relevant as it\\'s not a new response.\\\n                                      \"00:00:48.0400000\": 0.7,  # Older woman\\'s reaction is winding down, less relevant.\\\n                                      \"00:00:49.0410000\": 0.6,  # Interaction concluding, relevance to feelings decreasing.\\\n                                      \"00:00:50\": 0.5,  # Interaction is over, relevance to the question is moderate.}"
+                #         }
+                #     ]
+                # },
                 {
                     "role": "assistant",
                     "content": [
@@ -489,16 +476,29 @@ class AzureVideoQA:
                     ]
                 },
                 {
-                'role': 'user',
-                'content': [{
-                    'type': 'acv_document_id',
-                    # 'acv_document_id': f'i{video_id.lower()}',
-                    'acv_document_id': acv_document_id,
-                }, {
-                    'type': 'text',
-                    'text': f'{PROMPT_BEFORE}"{question}"{PROMPT_AFTER}',
-                }],
-            }],
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "acv_document_id",
+                            "acv_document_id": acv_document_id,
+                        },
+                        {
+                            "type": "text",
+                            "text": f'{PROMPT_BEFORE}"{question}"{PROMPT_AFTER}',
+                        }
+                    ]
+                },
+                # {
+                # 'role': 'user',
+                # 'content': [{
+                #     'type': 'acv_document_id',
+                #     # 'acv_document_id': f'i{video_id.lower()}',
+                #     'acv_document_id': acv_document_id,
+                # }, {
+                #     'type': 'text',
+                #     'text': f'{PROMPT_BEFORE}"{question}"{PROMPT_AFTER}',
+                # }],
+            ],
             'temperature': 0.7,
             'top_p': 0.95,
             'max_tokens': 800,
@@ -530,6 +530,10 @@ class AzureVideoQA:
             try:
                 response = _ask_one_question(video_id, question['q'], url_video, timeout)
             except RequestException:
+                failures.append((video_id, question))
+                requests.append((video_id, question))
+                continue
+            if response.status_code == 500:
                 failures.append((video_id, question))
                 requests.append((video_id, question))
                 continue
@@ -577,8 +581,8 @@ class AzureVideoQA:
         max_retrys = 10
         failed_ingestions = []
 
-        with open('final_dict.pkl', 'rb') as f:
-            dict_final_dict = pickle_load(f)
+        # with open('final_dict.pkl', 'rb') as f:
+        #     dict_final_dict = pickle_load(f)
 
         for i, video_id in (pbar_video := tqdm(enumerate(video_keys_existing), total=total)):
             if i >= total:
@@ -649,6 +653,8 @@ class AzureVideoQA:
             #     sleep(sleep_seconds)
             #     # responses.append(response)
             # sleep(sleep_seconds)
+            if len(successes) == 0:
+                video_id += '_failed'
             with open(f'./result/{video_id}.pkl', 'wb') as f:
                 pickle_dump(dict_current_video, f)
 
