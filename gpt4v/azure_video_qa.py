@@ -12,6 +12,7 @@ from requests import post as requests_post, put as requests_put, delete as reque
 from tqdm.notebook import tqdm  # pip install ipywidgets
 from azure.storage.blob import BlobServiceClient
 from openai import AzureOpenAI
+from utils_gpt4v import generate_indexName
 
 
 TIMEOUT = 100
@@ -101,6 +102,8 @@ class AzureVideoQA:
             azure_endpoint=f"https://{self.azure_openai_endpoint}/openai/deployments/gpt4v/extensions/chat/completions"
         )
 
+        self.acv_document_id2indexName = {}
+
     def _get_azure_blob_storage_container_client(self):
         azure_blob_storage_container_name = self.azure_blob_storage_container_name
         account_url = f'https://{self.azure_blob_storage_account_name}.blob.core.windows.net'
@@ -160,7 +163,9 @@ class AzureVideoQA:
         return dict_video_name_url
 
     def create_video_index(self, acv_document_id: str):
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}'
+        indexName = generate_indexName()
+        self.acv_document_id2indexName[acv_document_id] = indexName
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{indexName}'
         headers = {
             'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key,
             'Content-Type': 'application/json',
@@ -178,13 +183,16 @@ class AzureVideoQA:
         if 'error' in response_json:
             try:
                 assert response_json['error']['code'] == 'AlreadyExists'
-            except:
-                raise SystemExit(f'Failed to create index. Error: {response_json}') from None
+            except Exception as e:
+                print(f'{response.request.method} {response.request.path_url} \r\n{response.request.headers}\r\n\r\n{response.request.body}')
+                raise SystemExit(f'Failed to create index. Error: {response_json}') from e
             print(f'Index {acv_document_id} already exists')
+        response.raise_for_status()
         return response_json
 
     def delete_ingestion_index(self, acv_document_id) -> None:
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}'
+        indexName = self.acv_document_id2indexName[acv_document_id]
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{indexName}'
         params = {'api-version': '2023-05-01-preview'}
         headers = {'Ocp-Apim-Subscription-Key': self.azure_computer_vision_key}
         response = requests_delete(url, params=params, headers=headers, timeout=TIMEOUT)
@@ -208,7 +216,8 @@ class AzureVideoQA:
             'documentUrl': video_url,
         }
         data = {'videos': [video], 'includeSpeechTranscript': True}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}/ingestions/{acv_document_id}'
+        indexName = self.acv_document_id2indexName[acv_document_id]
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{indexName}/ingestions/{acv_document_id}'
         try:
             response_batch = requests_put(url, params=params, headers=headers, json=data, timeout=TIMEOUT)
         except RequestException as e:
@@ -236,7 +245,8 @@ class AzureVideoQA:
             'Content-Type': 'application/json',
         }
         params = {'api-version': '2023-05-01-preview'}
-        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{acv_document_id.replace('_', 'underscore')}/ingestions/{acv_document_id}'
+        indexName = self.acv_document_id2indexName[acv_document_id]
+        url = f'https://{self.azure_computer_vision_endpoint}/computervision/retrieval/indexes/{indexName}/ingestions/{acv_document_id}'
         try:
             response = httpx_get(url, params=params, headers=headers, timeout=TIMEOUT)
         except RequestException as e:
@@ -316,13 +326,14 @@ class AzureVideoQA:
         }
         params = {'api-version': api_version}
         roleInformation = "Please analyze the visual and audio information in the uploaded video and output the relevance of each video frame to a given question requiring theory-of-mind reasoning of the video. The output format needs to be a Pythoon dictionary of timestamp: relevance score (a floating value between 0.0 and 1.0, 1.0 meaning highly relevant), each line followed by a Python comment containing the rationale behind the score."
+        indexName = self.acv_document_id2indexName[acv_document_id]
         json_data = {
             'dataSources': [{
                 'type': 'AzureComputerVisionVideoIndex',
                 'parameters': {
                     'computerVisionBaseUrl': f'https://{self.azure_computer_vision_endpoint}/computervision',
                     'computerVisionApiKey': self.azure_computer_vision_key,
-                    'indexName': acv_document_id.replace('_', 'underscore'),
+                    'indexName': indexName,
                     'videoUrls': [url_video],
                     'roleInformation': roleInformation,
                 },
