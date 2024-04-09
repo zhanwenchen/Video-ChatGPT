@@ -8,8 +8,10 @@ from typing import Tuple
 from re import compile as re_compile, DOTALL as re_DOTALL, MULTILINE as re_MULTILINE
 from json import loads as json_loads
 from ast import literal_eval as ast_literal_eval
+from pprint import pformat
+from warnings import warn
 from httpx import Response
-from azure_video_qa import PROMPT_BEFORE, PROMPT_AFTER
+from azure_video_qa import PROMPT_BEFORE, PROMPT_AFTER, _load_vqa_file
 
 
 strptime = datetime.strptime
@@ -18,7 +20,7 @@ REGEX_COMPILED = re_compile(PATTERN_MARKDOWN_PYTHON, re_DOTALL | re_MULTILINE)
 
 
 # for each video:
-def process_video_dict(video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
+def process_video_dict(video_id: str, video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
     '''
     _summary_
 
@@ -33,19 +35,26 @@ def process_video_dict(video_dict: dict, indices_or_timestamps: str) -> dict[lis
     '''
     full_ts = '0.00-60.019000' # TODO load full ts from qa gt file
     return_dict = {}
+    failures = []
     # for each success (question), get all data entries
     for success_response in video_dict['successes']:
         # for each data entry, get all possible frames
-        dict_frame_relevance, str_frame_relevance = httpx_response2dictstr(success_response)
-        timestamps = get_max_timestamps(dict_frame_relevance)
         question = extract_question_from_response_request(success_response.request)
+        try:
+            dict_frame_relevance, str_frame_relevance = httpx_response2dictstr(success_response)
+        except ValueError as e:
+            warn(f'ValueError encountered while processing video_id={video_id}, question={question}')
+            failures.append(question)
+            continue
+        timestamps = get_max_timestamps(dict_frame_relevance)
         if indices_or_timestamps == 'indices':
             frame_indices = [timestamp2index(timestamp, full_ts, 100) for timestamp in timestamps]
             return_dict[question] = frame_indices
         else:
             print(question, timestamps)
             return_dict[question] = timestamps
-    return return_dict
+
+    return return_dict, failures
 
 
 # def map_timeframes_to_index(timeframes: list[str]):
@@ -62,7 +71,11 @@ def timestamp2float(timestamp: str) -> float:
         _type_: _description_
     '''
     timestamp = timestamp[:12]
-    return strptime(timestamp, '%H:%M:%S.%f').second
+    if '.' in timestamp:
+        format_string = '%H:%M:%S.%f'
+    else:
+        format_string = '%H:%M:%S'
+    return strptime(timestamp, format_string).second
 
 
 def timestamp2index(timestamp: str, timeframes_floats_start_end: str, num_frames: int) -> int:
@@ -116,15 +129,25 @@ def get_gpt4v_responses(dirpath: str) -> list[dict]:
 
 
 def extract_python_string_from_text(text: str) -> str:
-    return REGEX_COMPILED.search(text).groups()[0]
+    match = REGEX_COMPILED.search(text)
+    if match is None:
+        raise ValueError(f'No match found in text={text}')
+    return match.groups()[0]
 
 
 def httpx_response2text(response: Response) -> str:
-    return response.json()['choices'][0]['message']['content']
+    response_json = response.json()
+    try:
+        return response_json['choices'][0]['message']['content']
+    except KeyError as e:
+        raise ValueError(f'ValueError encountered while processing response_json=\n\n{pformat(response_json, indent=2)}') from e
 
 
 def httpx_response2dictstr(response: Response) -> Tuple[dict, str]:
-    str_dict = extract_python_string_from_text(httpx_response2text(response))
+    text = httpx_response2text(response)
+    if text == '':
+        raise ValueError(f'No text extracted for response=\n\n{pformat(response.json(), indent=2)}. \n\nrequest={pformat(jsonify_request(response.request), indent=2)}')
+    str_dict = extract_python_string_from_text(text)
     return ast_literal_eval(str_dict), str_dict
 
 
@@ -145,8 +168,57 @@ def get_max_timestamps(dict_frame_relevance: dict[str, dict]) -> list[str]:
     return [k for k, v in dict_frame_relevance.items() if v == relevance_max]
 
 
-def extract_question_from_response_request(request):
+def jsonify_request(request):
     my_bytes_value = request.body.decode()
     dict_request = json_loads(my_bytes_value)
+    return dict_request
+
+
+def extract_question_from_response_request(request):
+    dict_request = jsonify_request(request)
     text = dict_request['messages'][-1]['content'][-1]['text']
     return text[text.index(PROMPT_BEFORE)+len(PROMPT_BEFORE):text.index(PROMPT_AFTER)]
+
+
+# video: question: ts, etc
+def process_videos_dicts():
+    dirpath = 'result'
+    response_dicts = get_gpt4v_responses(dirpath)
+    dict_video_id_question_ts_successes = {}
+    dict_video_id_question_ts_failures = {}
+    for video_id, response_dict in response_dicts.items():
+        successes, failures = process_video_dict(video_id, response_dict, 'indices')
+        dict_video_id_question_ts_successes[video_id] = successes
+        if failures:
+            dict_video_id_question_ts_failures[video_id] = failures
+    return dict_video_id_question_ts_successes, dict_video_id_question_ts_failures
+
+
+def add_ts_to_gt(fpath_qa, ts_dict):
+    dict_video_qa = _load_vqa_file(fpath_qa)
+    failures_dict = {}
+    for video_id, questions in dict_video_qa.items():
+        if video_id not in ts_dict:
+            continue
+
+        failures = []
+        for question in questions:
+            question_text = question['q']
+            question_text = question_text.replace('Why does the man in the brown shirt snickwer at :36?', 'Why does the man in the brown shirt snigger at :36?')
+            question_text = question_text.replace('Why does the African American man stutter at 0:41', 'Why does the black man stutter at 0:41')
+
+            try:
+                ts_dict_question = ts_dict[video_id][f'"{question_text}"']
+            except KeyError:
+                print(video_id, f'"{question_text}"')
+                failures.append(f'"{question_text}"')
+                continue
+            question['gt_frame'] = ts_dict_question
+        if failures:
+            failures_dict[video_id] = failures
+    return dict_video_qa
+
+
+def load_and_add_ts_to_gt(fpath_qa):
+    successes, _ = process_videos_dicts()
+    return add_ts_to_gt(fpath_qa, successes)
