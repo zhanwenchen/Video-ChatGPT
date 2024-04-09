@@ -9,6 +9,7 @@ from re import compile as re_compile, DOTALL as re_DOTALL, MULTILINE as re_MULTI
 from json import loads as json_loads
 from ast import literal_eval as ast_literal_eval
 from httpx import Response
+from azure_video_qa import PROMPT_BEFORE, PROMPT_AFTER
 
 
 strptime = datetime.strptime
@@ -16,83 +17,8 @@ PATTERN_MARKDOWN_PYTHON = r'^```(?:\w+)?\s*\n(.*?)(?=^```)```'
 REGEX_COMPILED = re_compile(PATTERN_MARKDOWN_PYTHON, re_DOTALL | re_MULTILINE)
 
 
-def response_text_to_list_dicts(response_text: str) -> list[dict]:
-    text_list_cleaned = []
-    for paragraph in response_text.split('\n'):
-        if paragraph.startswith('data:'):
-            string = f'{{{paragraph.replace('data:', '"data":').replace('[DONE]', '"[DONE]"')}}}'
-            try:
-                cleaned_paragraph = json_loads(string)
-            except:
-                print(string)
-            text_list_cleaned.append(cleaned_paragraph)
-
-    return text_list_cleaned
-
-
-def find_video_timeframes(string) -> list[str]:
-    '''
-    _summary_
-
-    Args:
-        string (str): the content of a response data entry
-
-    Returns:
-        list[str]: the list of video timestamps
-
-    Example:
-        >>> find_video_timeframes(text_list_cleaned[1]['data']['choices'][0]['messages'][0]['delta']['content'])
-        ['00:00:01',
-         '00:00:07',
-         '00:00:11',
-         '00:00:16',
-         '00:00:21',
-         '00:00:24',
-         '00:00:31',
-         '00:00:35',
-         '00:00:40',
-         '00:00:52',
-         '00:00:55']
-    '''
-    # regex = r'^(?:\d+(?::[0-5][0-9]:[0-5][0-9])?|[0-5]?[0-9]:[0-5][0-9])$' # doesn't work.
-    regex = r'\d{2}:\d{2}:\d{2}' # works
-    # works by removing the start and end
-    # regex = r'(?:\d+(?::[0-5][0-9]:[0-5][0-9])?|[0-5]?[0-9]:[0-5][0-9])'
-    timeframes = re_compile(regex).findall(string)
-    return timeframes
-
-
-# It's slightly different
-# {'Is the woman concerned with the man': ['00:00:12', '00:00:17', '00:00:47'],
-#  'Is the woman excited to see the man?': ['00:00:12',
-#                                           '00:00:17',
-#                                           '00:00:47',
-#                                           '00:00:59'],
-#  'What kind of laugh does the man let out?': ['00:00:12', '00:00:47'],
-#  'Why does the woman keep looking behind her?': ['00:00:12',
-#                                                  '00:00:17',
-#                                                  '00:00:47'],
-#  'Why does the woman put one finger up?': ['00:00:12']}
-
-
-def process_success_response(success_response) -> Tuple[str, list[str]]:
-    success_response_data_dicts = response_text_to_list_dicts(
-        success_response.text)
-    try:
-        assert len(success_response_data_dicts) >= 2
-    except AssertionError as e:
-        raise ValueError(f'len(success_response_data_dicts)={len(
-            success_response_data_dicts)}. success_response_data_dicts={success_response_data_dicts}') from e
-    content_1 = success_response_data_dicts[1]['data']['choices'][0]['messages'][0]['delta']['content']
-    # question is where to extract the question
-    question = str(success_response.request.body).split(
-        '\\"')[1].split('\\')[0]
-    timestamps = find_video_timeframes(content_1)
-    return question, timestamps
-
-
 # for each video:
-def process_video(video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
+def process_video_dict(video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
     '''
     _summary_
 
@@ -105,16 +31,19 @@ def process_video(video_dict: dict, indices_or_timestamps: str) -> dict[list[str
     Returns:
         dict: {question: [timeframes]}
     '''
+    full_ts = '0.00-60.019000' # TODO load full ts from qa gt file
     return_dict = {}
     # for each success (question), get all data entries
     for success_response in video_dict['successes']:
         # for each data entry, get all possible frames
-        question, timestamps = process_success_response(success_response)
-        frame_indices = [timestamp2index(
-            timestamp, '0.00-60.019000', 100) for timestamp in timestamps]
+        dict_frame_relevance, str_frame_relevance = httpx_response2dictstr(success_response)
+        timestamps = get_max_timestamps(dict_frame_relevance)
+        question = extract_question_from_response_request(success_response.request)
         if indices_or_timestamps == 'indices':
+            frame_indices = [timestamp2index(timestamp, full_ts, 100) for timestamp in timestamps]
             return_dict[question] = frame_indices
         else:
+            print(question, timestamps)
             return_dict[question] = timestamps
     return return_dict
 
@@ -132,7 +61,8 @@ def timestamp2float(timestamp: str) -> float:
     Returns:
         _type_: _description_
     '''
-    return strptime(timestamp, '%H:%M:%S').second
+    timestamp = timestamp[:12]
+    return strptime(timestamp, '%H:%M:%S.%f').second
 
 
 def timestamp2index(timestamp: str, timeframes_floats_start_end: str, num_frames: int) -> int:
@@ -193,17 +123,17 @@ def httpx_response2text(response: Response) -> str:
     return response.json()['choices'][0]['message']['content']
 
 
-def httpx_response2dict(response: Response) -> Tuple[dict, str]:
+def httpx_response2dictstr(response: Response) -> Tuple[dict, str]:
     str_dict = extract_python_string_from_text(httpx_response2text(response))
     return ast_literal_eval(str_dict), str_dict
 
 
-def get_max_timestamps(response_dict: dict[str, dict]) -> list[str]:
+def get_max_timestamps(dict_frame_relevance: dict[str, dict]) -> list[str]:
     '''
     _summary_
 
     Args:
-        response_dict (dict[str, dict]): _description_
+        dict_frame_relevance (dict[str, dict]): _description_
 
     Raises:
         AssertionError: _description_
@@ -211,5 +141,12 @@ def get_max_timestamps(response_dict: dict[str, dict]) -> list[str]:
     Returns:
         list[str]: _description_
     '''
-    relevance_max = max(response_dict.values())
-    return [k for k, v in response_dict.items() if v == relevance_max]
+    relevance_max = max(dict_frame_relevance.values())
+    return [k for k, v in dict_frame_relevance.items() if v == relevance_max]
+
+
+def extract_question_from_response_request(request):
+    my_bytes_value = request.body.decode()
+    dict_request = json_loads(my_bytes_value)
+    text = dict_request['messages'][-1]['content'][-1]['text']
+    return text[text.index(PROMPT_BEFORE)+len(PROMPT_BEFORE):text.index(PROMPT_AFTER)]
