@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Tuple
 from re import compile as re_compile, DOTALL as re_DOTALL, MULTILINE as re_MULTILINE
 from json import loads as json_loads
+from ast import literal_eval as ast_literal_eval
 from httpx import Response
 
 
@@ -190,3 +191,8 @@ def extract_python_string_from_text(text: str) -> str:
 
 def httpx_response2text(response: Response) -> str:
     return response.json()['choices'][0]['message']['content']
+
+
+def httpx_response2dict(response: Response) -> Tuple[dict, str]:
+    str_dict = extract_python_string_from_text(httpx_response2text(response))
+    return ast_literal_eval(str_dict), str_dict
