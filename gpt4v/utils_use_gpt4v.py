@@ -5,11 +5,13 @@ from glob import glob as glob_glob
 from os.path import join as os_path_join
 from datetime import datetime
 from typing import Tuple
-from re import compile as re_compile
+from re import compile as re_compile, DOTALL as re_DOTALL, MULTILINE as re_MULTILINE
 from json import loads as json_loads
 
 
 strptime = datetime.strptime
+PATTERN_MARKDOWN_PYTHON = r'^```(?:\w+)?\s*\n(.*?)(?=^```)```'
+REGEX_COMPILED = re_compile(PATTERN_MARKDOWN_PYTHON, re_DOTALL | re_MULTILINE)
 
 
 def response_text_to_list_dicts(response_text: str) -> list[dict]:
@@ -177,5 +179,14 @@ def get_gpt4v_responses(dirpath: str) -> list[dict]:
             response_dicts[Path(response_fname).stem] = response_dict
             if len(response_dict) != 4:
                 print(response_fname, len(response_dict))
+
+
+def extract_python_string_from_text(text: str) -> str:
+    return REGEX_COMPILED.search(text).groups()[0]
+
+
+
+def extract_python_string_from_text(text: str) -> str:
+    return REGEX_COMPILED.search(text).groups()[0]
 
     return response_dicts  # But then how to deal with so many "data"?
