@@ -196,3 +196,20 @@ def httpx_response2text(response: Response) -> str:
 def httpx_response2dict(response: Response) -> Tuple[dict, str]:
     str_dict = extract_python_string_from_text(httpx_response2text(response))
     return ast_literal_eval(str_dict), str_dict
+
+
+def get_max_timestamps(response_dict: dict[str, dict]) -> list[str]:
+    '''
+    _summary_
+
+    Args:
+        response_dict (dict[str, dict]): _description_
+
+    Raises:
+        AssertionError: _description_
+
+    Returns:
+        list[str]: _description_
+    '''
+    relevance_max = max(response_dict.values())
+    return [k for k, v in response_dict.items() if v == relevance_max]
