@@ -1,8 +1,7 @@
 
-from os import access as os_access, W_OK as os_W_OK
-from os.path import exists as os_path_exists, join as os_path_join, basename as os_path_basename, dirname as os_path_dirname, isdir as os_path_isdir
+from os.path import exists as os_path_exists, join as os_path_join, basename as os_path_basename
 from glob import glob as glob_glob
-from json import load as json_load, dump as json_dump
+from json import load as json_load
 from collections import defaultdict
 from pathlib import Path
 from time import sleep
@@ -70,15 +69,8 @@ class AzureVideoQA:
         # 1. Set up local files
         self.dirpath_videos = dirpath_videos = config.LOCAL_FILES.DIRPATH_VIDEOS
         assert os_path_exists(dirpath_videos), f'dirpath_video does not exist: {dirpath_videos}'
-        self.fpath_qa_json_train = fpath_qa_json_train = config.LOCAL_FILES.FPATH_QA_JSON_TRAIN
-        assert os_path_exists(fpath_qa_json_train), f'dirpath_video does not exist: {fpath_qa_json_train}'
-        self.fpath_qa_json_val = fpath_qa_json_val = config.LOCAL_FILES.FPATH_QA_JSON_VAL
-        assert os_path_exists(fpath_qa_json_val), f'dirpath_video does not exist: {fpath_qa_json_val}'
-        self.fpath_qa_json_test = fpath_qa_json_test = config.LOCAL_FILES.FPATH_QA_JSON_TEST
-        assert os_path_exists(fpath_qa_json_test), f'dirpath_video does not exist: {fpath_qa_json_test}'
-        self.fpath_qa_json_merged_to_save = fpath_qa_json_merged_to_save = config.LOCAL_FILES.FPATH_QA_JSON_MERGED_TO_SAVE
-        dirpath_qa_json_merged_to_save = os_path_dirname(fpath_qa_json_merged_to_save)
-        assert os_access(dirpath_qa_json_merged_to_save, os_W_OK) and os_path_isdir(dirpath_qa_json_merged_to_save), f'dirpath_qa_json_merged_to_save is not writable: {dirpath_qa_json_merged_to_save}'
+        self.fpath_qa_json = fpath_qa_json = config.LOCAL_FILES.FPATH_QA_JSON
+        assert os_path_exists(fpath_qa_json), f'fpath_qa_json does not exist: {fpath_qa_json}'
 
         # 1. Set up Azure Blob Storage
         self.azure_blob_storage_account_name = config.AZURE_BLOB_STORAGE.ACCOUNT_NAME
@@ -103,6 +95,7 @@ class AzureVideoQA:
         )
 
         self.acv_document_id2indexName = {}
+        self.dirname_result = config.LOCAL_FILES.DIRNAME_RESULT
 
     def _get_azure_blob_storage_container_client(self):
         azure_blob_storage_container_name = self.azure_blob_storage_container_name
@@ -482,7 +475,7 @@ class AzureVideoQA:
         ask_questions_one_video = self.ask_questions_one_video
         result_dict = {}
         len_video_keys_existing = len(video_keys_existing)
-        total = len_video_keys_existing if videos_max < 0 else min(len_video_keys_existing, videos_max)
+        dirname_result = self.dirname_result
         dirname_result = 'result'
         max_retries = 10
         failed_ingestions = []
@@ -506,7 +499,7 @@ class AzureVideoQA:
             dict_current_video = {'video_id': video_id, 'successes': successes, 'failures': failures, 'requests': requests}
             result_dict[video_id] = dict_current_video
             if len(successes) == 0:
-                video_id += '_failed'
+            with open(os_path_join(dirname_result, f'{video_id}.pkl'), 'wb') as f:
             with open(f'./result/{video_id}.pkl', 'wb') as f:
                 pickle_dump(dict_current_video, f)
 
@@ -521,10 +514,5 @@ class AzureVideoQA:
         Returns:
             dict: _description_
         '''
-        dict_vqa_train = _load_vqa_file(self.fpath_qa_json_train)
-        dict_vqa_val = _load_vqa_file(self.fpath_qa_json_val)
-        dict_vqa_test = _load_vqa_file(self.fpath_qa_json_test)
-        dict_vqa_merged = {**dict_vqa_train, **dict_vqa_val, **dict_vqa_test}
-        with open(self.fpath_qa_json_merged_to_save, 'w') as file_out:
-            json_dump(dict_vqa_merged, file_out, indent=4)
-        return dict_vqa_merged
+        dict_vqa = _load_vqa_file(self.fpath_qa_json)
+        return dict_vqa
