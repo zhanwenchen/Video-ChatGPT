@@ -1,94 +1,26 @@
-from tqdm import tqdm
 from pathlib import Path
 from pickle import load as pickle_load
 from glob import glob as glob_glob
 from os.path import join as os_path_join
 from datetime import datetime
 from typing import Tuple
-from re import compile as re_compile
+from re import compile as re_compile, DOTALL as re_DOTALL, MULTILINE as re_MULTILINE
 from json import loads as json_loads
+from ast import literal_eval as ast_literal_eval
+from pprint import pformat
+from warnings import warn
+from httpx import Response
+from azure_video_qa import PROMPT_BEFORE, PROMPT_AFTER, _load_vqa_file
+from tqdm import tqdm
 
 
 strptime = datetime.strptime
-
-
-def response_text_to_list_dicts(response_text: str) -> list[dict]:
-    text_list_cleaned = []
-    for paragraph in response_text.split('\n'):
-        if paragraph.startswith('data:'):
-            string = f'{{{paragraph.replace('data:', '"data":').replace('[DONE]', '"[DONE]"')}}}'
-            try:
-                cleaned_paragraph = json_loads(string)
-            except:
-                print(string)
-            text_list_cleaned.append(cleaned_paragraph)
-
-    return text_list_cleaned
-
-
-def find_video_timeframes(string) -> list[str]:
-    '''
-    _summary_
-
-    Args:
-        string (str): the content of a response data entry
-
-    Returns:
-        list[str]: the list of video timestamps
-
-    Example:
-        >>> find_video_timeframes(text_list_cleaned[1]['data']['choices'][0]['messages'][0]['delta']['content'])
-        ['00:00:01',
-         '00:00:07',
-         '00:00:11',
-         '00:00:16',
-         '00:00:21',
-         '00:00:24',
-         '00:00:31',
-         '00:00:35',
-         '00:00:40',
-         '00:00:52',
-         '00:00:55']
-    '''
-    # regex = r'^(?:\d+(?::[0-5][0-9]:[0-5][0-9])?|[0-5]?[0-9]:[0-5][0-9])$' # doesn't work.
-    regex = r'\d{2}:\d{2}:\d{2}' # works
-    # works by removing the start and end
-    # regex = r'(?:\d+(?::[0-5][0-9]:[0-5][0-9])?|[0-5]?[0-9]:[0-5][0-9])'
-    timeframes = re_compile(regex).findall(string)
-    return timeframes
-
-
-# It's slightly different
-# {'Is the woman concerned with the man': ['00:00:12', '00:00:17', '00:00:47'],
-#  'Is the woman excited to see the man?': ['00:00:12',
-#                                           '00:00:17',
-#                                           '00:00:47',
-#                                           '00:00:59'],
-#  'What kind of laugh does the man let out?': ['00:00:12', '00:00:47'],
-#  'Why does the woman keep looking behind her?': ['00:00:12',
-#                                                  '00:00:17',
-#                                                  '00:00:47'],
-#  'Why does the woman put one finger up?': ['00:00:12']}
-
-
-def process_success_response(success_response) -> Tuple[str, list[str]]:
-    success_response_data_dicts = response_text_to_list_dicts(
-        success_response.text)
-    try:
-        assert len(success_response_data_dicts) >= 2
-    except AssertionError as e:
-        raise ValueError(f'len(success_response_data_dicts)={len(
-            success_response_data_dicts)}. success_response_data_dicts={success_response_data_dicts}') from e
-    content_1 = success_response_data_dicts[1]['data']['choices'][0]['messages'][0]['delta']['content']
-    # question is where to extract the question
-    question = str(success_response.request.body).split(
-        '\\"')[1].split('\\')[0]
-    timestamps = find_video_timeframes(content_1)
-    return question, timestamps
+PATTERN_MARKDOWN_PYTHON = r'^```(?:\w+)?\s*\n(.*?)(?=^```)```'
+REGEX_COMPILED = re_compile(PATTERN_MARKDOWN_PYTHON, re_DOTALL | re_MULTILINE)
 
 
 # for each video:
-def process_video(video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
+def process_video_dict(video_id: str, video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
     '''
     _summary_
 
@@ -101,18 +33,28 @@ def process_video(video_dict: dict, indices_or_timestamps: str) -> dict[list[str
     Returns:
         dict: {question: [timeframes]}
     '''
+    full_ts = '0.00-60.019000' # TODO load full ts from qa gt file
     return_dict = {}
+    failures = []
     # for each success (question), get all data entries
     for success_response in video_dict['successes']:
         # for each data entry, get all possible frames
-        question, timestamps = process_success_response(success_response)
-        frame_indices = [timestamp2index(
-            timestamp, '0.00-60.019000', 100) for timestamp in timestamps]
+        question = extract_question_from_response_request(success_response.request)
+        try:
+            dict_frame_relevance, str_frame_relevance = httpx_response2dictstr(success_response)
+        except ValueError as e:
+            warn(f'ValueError encountered while processing video_id={video_id}, question={question}')
+            failures.append(question)
+            continue
+        timestamps = get_max_timestamps(dict_frame_relevance)
         if indices_or_timestamps == 'indices':
+            frame_indices = [timestamp2index(timestamp, full_ts, 100) for timestamp in timestamps]
             return_dict[question] = frame_indices
         else:
+            print(question, timestamps)
             return_dict[question] = timestamps
-    return return_dict
+
+    return return_dict, failures
 
 
 # def map_timeframes_to_index(timeframes: list[str]):
@@ -128,7 +70,12 @@ def timestamp2float(timestamp: str) -> float:
     Returns:
         _type_: _description_
     '''
-    return strptime(timestamp, '%H:%M:%S').second
+    timestamp = timestamp[:12]
+    if '.' in timestamp:
+        format_string = '%H:%M:%S.%f'
+    else:
+        format_string = '%H:%M:%S'
+    return strptime(timestamp, format_string).second
 
 
 def timestamp2index(timestamp: str, timeframes_floats_start_end: str, num_frames: int) -> int:
@@ -179,3 +126,98 @@ def get_gpt4v_responses(dirpath: str) -> list[dict]:
                 print(response_fname, len(response_dict))
 
     return response_dicts  # But then how to deal with so many "data"?
+
+
+def extract_python_string_from_text(text: str) -> str:
+    match = REGEX_COMPILED.search(text)
+    if match is None:
+        raise ValueError(f'No match found in text={text}')
+    return match.groups()[0]
+
+
+def httpx_response2text(response: Response) -> str:
+    response_json = response.json()
+    try:
+        return response_json['choices'][0]['message']['content']
+    except KeyError as e:
+        raise ValueError(f'ValueError encountered while processing response_json=\n\n{pformat(response_json, indent=2)}') from e
+
+
+def httpx_response2dictstr(response: Response) -> Tuple[dict, str]:
+    text = httpx_response2text(response)
+    if text == '':
+        raise ValueError(f'No text extracted for response=\n\n{pformat(response.json(), indent=2)}. \n\nrequest={pformat(jsonify_request(response.request), indent=2)}')
+    str_dict = extract_python_string_from_text(text)
+    return ast_literal_eval(str_dict), str_dict
+
+
+def get_max_timestamps(dict_frame_relevance: dict[str, dict]) -> list[str]:
+    '''
+    _summary_
+
+    Args:
+        dict_frame_relevance (dict[str, dict]): _description_
+
+    Raises:
+        AssertionError: _description_
+
+    Returns:
+        list[str]: _description_
+    '''
+    relevance_max = max(dict_frame_relevance.values())
+    return [k for k, v in dict_frame_relevance.items() if v == relevance_max]
+
+
+def jsonify_request(request):
+    my_bytes_value = request.body.decode()
+    dict_request = json_loads(my_bytes_value)
+    return dict_request
+
+
+def extract_question_from_response_request(request):
+    dict_request = jsonify_request(request)
+    text = dict_request['messages'][-1]['content'][-1]['text']
+    return text[text.index(PROMPT_BEFORE)+len(PROMPT_BEFORE):text.index(PROMPT_AFTER)]
+
+
+# video: question: ts, etc
+def process_videos_dicts(dirpath_responses):
+    response_dicts = get_gpt4v_responses(dirpath_responses)
+    dict_video_id_question_ts_successes = {}
+    dict_video_id_question_ts_failures = {}
+    for video_id, response_dict in response_dicts.items():
+        successes, failures = process_video_dict(video_id, response_dict, 'indices')
+        dict_video_id_question_ts_successes[video_id] = successes
+        if failures:
+            dict_video_id_question_ts_failures[video_id] = failures
+    return dict_video_id_question_ts_successes, dict_video_id_question_ts_failures
+
+
+def add_ts_to_gt(fpath_qa, ts_dict):
+    dict_video_qa = _load_vqa_file(fpath_qa)
+    failures_dict = {}
+    for video_id, questions in dict_video_qa.items():
+        if video_id not in ts_dict:
+            continue
+
+        failures = []
+        for question in questions:
+            question_text = question['q']
+            question_text = question_text.replace('Why does the man in the brown shirt snigger at :36?', 'Why does the man in the brown shirt snicker at :36?')
+            question_text = question_text.replace('Why does the black man stutter at 0:41', 'Why does the African American man stutter at 0:41')
+
+            try:
+                ts_dict_question = ts_dict[video_id][f'"{question_text}"']
+            except KeyError:
+                print(f'KeyError: video_id={video_id}, question_text={question_text}. Available keys={list(ts_dict[video_id].keys())}')
+                failures.append(f'"{question_text}"')
+                continue
+            question['gt_frame'] = ts_dict_question
+        if failures:
+            failures_dict[video_id] = failures
+    return dict_video_qa
+
+
+def load_and_add_ts_to_gt(gpt4v_result_dirpath, fpath_qa):
+    successes, _ = process_videos_dicts(gpt4v_result_dirpath)
+    return add_ts_to_gt(fpath_qa, successes)
