@@ -1,4 +1,3 @@
-from tqdm import tqdm
 from pathlib import Path
 from pickle import load as pickle_load
 from glob import glob as glob_glob
@@ -12,6 +11,7 @@ from pprint import pformat
 from warnings import warn
 from httpx import Response
 from azure_video_qa import PROMPT_BEFORE, PROMPT_AFTER, _load_vqa_file
+from tqdm import tqdm
 
 
 strptime = datetime.strptime
@@ -181,9 +181,8 @@ def extract_question_from_response_request(request):
 
 
 # video: question: ts, etc
-def process_videos_dicts():
-    dirpath = 'result'
-    response_dicts = get_gpt4v_responses(dirpath)
+def process_videos_dicts(dirpath_responses):
+    response_dicts = get_gpt4v_responses(dirpath_responses)
     dict_video_id_question_ts_successes = {}
     dict_video_id_question_ts_failures = {}
     for video_id, response_dict in response_dicts.items():
@@ -204,13 +203,13 @@ def add_ts_to_gt(fpath_qa, ts_dict):
         failures = []
         for question in questions:
             question_text = question['q']
-            question_text = question_text.replace('Why does the man in the brown shirt snickwer at :36?', 'Why does the man in the brown shirt snigger at :36?')
-            question_text = question_text.replace('Why does the African American man stutter at 0:41', 'Why does the black man stutter at 0:41')
+            question_text = question_text.replace('Why does the man in the brown shirt snigger at :36?', 'Why does the man in the brown shirt snicker at :36?')
+            question_text = question_text.replace('Why does the black man stutter at 0:41', 'Why does the African American man stutter at 0:41')
 
             try:
                 ts_dict_question = ts_dict[video_id][f'"{question_text}"']
             except KeyError:
-                print(video_id, f'"{question_text}"')
+                print(f'KeyError: video_id={video_id}, question_text={question_text}. Available keys={list(ts_dict[video_id].keys())}')
                 failures.append(f'"{question_text}"')
                 continue
             question['gt_frame'] = ts_dict_question
@@ -219,6 +218,6 @@ def add_ts_to_gt(fpath_qa, ts_dict):
     return dict_video_qa
 
 
-def load_and_add_ts_to_gt(fpath_qa):
-    successes, _ = process_videos_dicts()
+def load_and_add_ts_to_gt(gpt4v_result_dirpath, fpath_qa):
+    successes, _ = process_videos_dicts(gpt4v_result_dirpath)
     return add_ts_to_gt(fpath_qa, successes)

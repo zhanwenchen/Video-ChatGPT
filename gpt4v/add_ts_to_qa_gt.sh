@@ -1,0 +1,3 @@
+python /home/zhanwen/vtom/gpt4v/add_ts_to_qa_gt.py --gpt4v_result_dirpath data/gpt4v/result --qa_file_in /home/zhanwen/vtom/data/siq2/qa/qa_train.json --qa_file_out /home/zhanwen/vtom/data/siq2/qa/qa_train_with_ts.json
+python /home/zhanwen/vtom/gpt4v/add_ts_to_qa_gt.py --gpt4v_result_dirpath data/gpt4v/result --qa_file_in /home/zhanwen/vtom/data/siq2/qa/qa_val.json --qa_file_out /home/zhanwen/vtom/data/siq2/qa/qa_val_with_ts.json
+python /home/zhanwen/vtom/gpt4v/add_ts_to_qa_gt.py --gpt4v_result_dirpath data/gpt4v/result --qa_file_in /home/zhanwen/vtom/data/siq2/qa/qa_test.json --qa_file_out /home/zhanwen/vtom/data/siq2/qa/qa_test_with_ts.json
