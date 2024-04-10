@@ -327,6 +327,8 @@ class AzureVideoQA:
         params = {'api-version': api_version}
         roleInformation = "Please analyze the visual and audio information in the uploaded video and output the relevance of each video frame to a given question requiring theory-of-mind reasoning of the video. The output format needs to be a Pythoon dictionary of timestamp: relevance score (a floating value between 0.0 and 1.0, 1.0 meaning highly relevant), each line followed by a Python comment containing the rationale behind the score."
         indexName = self.acv_document_id2indexName[acv_document_id]
+        question = question.replace('Why does the man in the brown shirt snigger at :36?', 'Why does the man in the brown shirt snicker at :36?')
+        question = question.replace('Why does the black man stutter at 0:41', 'Why does the African American man stutter at 0:41')
         json_data = {
             'dataSources': [{
                 'type': 'AzureComputerVisionVideoIndex',
