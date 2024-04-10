@@ -196,11 +196,13 @@ def process_videos_dicts(dirpath_responses):
 def add_ts_to_gt(fpath_qa, ts_dict):
     dict_video_qa = _load_vqa_file(fpath_qa)
     failures_dict = {}
+    dict_video_qa_new = {}
     for video_id, questions in dict_video_qa.items():
         if video_id not in ts_dict:
             continue
 
         failures = []
+        questions_new = []
         for question in questions:
             question_text = question['q']
             question_text = question_text.replace('Why does the man in the brown shirt snigger at :36?', 'Why does the man in the brown shirt snicker at :36?')
@@ -209,13 +211,16 @@ def add_ts_to_gt(fpath_qa, ts_dict):
             try:
                 ts_dict_question = ts_dict[video_id][f'"{question_text}"']
             except KeyError:
-                print(f'KeyError: video_id={video_id}, question_text={question_text}. Available keys={list(ts_dict[video_id].keys())}')
+                print(f'KeyError: video_id={video_id}, question_text={question_text}. Available keys=\n{list(ts_dict[video_id].keys())}')
                 failures.append(f'"{question_text}"')
                 continue
-            question['gt_frame'] = ts_dict_question
+            question_new = question.copy()
+            question_new['gt_frame'] = ts_dict_question
+            questions_new.append(question_new)
         if failures:
             failures_dict[video_id] = failures
-    return dict_video_qa
+        dict_video_qa_new[video_id] = questions_new
+    return dict_video_qa_new
 
 
 def load_and_add_ts_to_gt(gpt4v_result_dirpath, fpath_qa):
