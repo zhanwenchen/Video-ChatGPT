@@ -20,7 +20,7 @@ REGEX_COMPILED = re_compile(PATTERN_MARKDOWN_PYTHON, re_DOTALL | re_MULTILINE)
 
 
 # for each video:
-def process_video_dict(video_id: str, video_dict: dict, indices_or_timestamps: str) -> dict[list[str]]:
+def process_video_dict(video_id: str, video_dict: dict) -> dict[list[str]]:
     '''
     _summary_
 
@@ -46,13 +46,18 @@ def process_video_dict(video_id: str, video_dict: dict, indices_or_timestamps: s
             warn(f'ValueError encountered while processing video_id={video_id}, question={question}')
             failures.append(question)
             continue
-        timestamps = get_max_timestamps(dict_frame_relevance)
-        if indices_or_timestamps == 'indices':
-            frame_indices = [timestamp2index(timestamp, full_ts, 100) for timestamp in timestamps]
-            return_dict[question] = frame_indices
-        else:
-            print(question, timestamps)
-            return_dict[question] = timestamps
+        timestamp2frame_idx = {timestamp: timestamp2index(timestamp, full_ts, 100) for timestamp in dict_frame_relevance}
+        timestamps_max = get_max_timestamps_max(dict_frame_relevance)
+        frame_indices_dict = {timestamp2frame_idx[timestamp]: relevance for timestamp, relevance in dict_frame_relevance.items()}
+        frame_indices_max = [timestamp2frame_idx[timestamp_max] for timestamp_max in timestamps_max]
+        return_dict[question] = timestamps_max
+        dicty = {
+            'gt_frame_idx_max': frame_indices_max,
+            'gt_frame_idx_dict': frame_indices_dict,
+            'gt_timestamps': timestamps_max,
+            'gt_timestamps_dict': dict_frame_relevance,
+        }
+        return_dict[question] = dicty
 
     return return_dict, failures
 
@@ -151,7 +156,7 @@ def httpx_response2dictstr(response: Response) -> Tuple[dict, str]:
     return ast_literal_eval(str_dict), str_dict
 
 
-def get_max_timestamps(dict_frame_relevance: dict[str, dict]) -> list[str]:
+def get_max_timestamps_max(dict_frame_relevance: dict[str, dict]) -> list[str]:
     '''
     _summary_
 
@@ -186,7 +191,7 @@ def process_videos_dicts(dirpath_responses):
     dict_video_id_question_ts_successes = {}
     dict_video_id_question_ts_failures = {}
     for video_id, response_dict in response_dicts.items():
-        successes, failures = process_video_dict(video_id, response_dict, 'indices')
+        successes, failures = process_video_dict(video_id, response_dict)
         dict_video_id_question_ts_successes[video_id] = successes
         if failures:
             dict_video_id_question_ts_failures[video_id] = failures
@@ -202,7 +207,7 @@ def add_ts_to_gt(fpath_qa, ts_dict):
             continue
 
         failures = []
-        questions_new = []
+        questions_new = {}
         for question in questions:
             question_text = question['q']
             question_text = question_text.replace('Why does the man in the brown shirt snigger at :36?', 'Why does the man in the brown shirt snicker at :36?')
@@ -215,8 +220,11 @@ def add_ts_to_gt(fpath_qa, ts_dict):
                 failures.append(f'"{question_text}"')
                 continue
             question_new = question.copy()
-            question_new['gt_frame'] = ts_dict_question
-            questions_new.append(question_new)
+            question_new['gt_frame_idx_max'] = ts_dict_question['gt_frame_idx_max']
+            question_new['gt_frame_idx_dict'] = ts_dict_question['gt_frame_idx_dict']
+            question_new['gt_timestamps'] = ts_dict_question['gt_timestamps']
+            question_new['gt_timestamps_dict'] = ts_dict_question['gt_timestamps_dict']
+            questions_new[question_new['qid']] = question_new
         if failures:
             failures_dict[video_id] = failures
         dict_video_qa_new[video_id] = questions_new
