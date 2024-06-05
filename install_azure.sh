@@ -196,15 +196,13 @@ exit() # Get out of the Python shell.
 
 ```bash
 cd && git clone --recursive --single-branch --branch v0.18.0 https://github.com/pytorch/vision.git
-# <!-- sudo ln /usr/local/include/ffnvcodec/dynlink_cuviddec.h /usr/local/include/ffnvcodec/cuviddec.h
-# sudo ln /usr/local/include/ffnvcodec/dynlink_nvcuvid.h /usr/local/include/ffnvcodec/nvcuvid.h -->
 sudo ln /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so
-# <!-- export TORCHVISION_INCLUDE=/usr/local/include/ffnvcodec # for cuviddec.h and nvcuvid.h -->
-# TORCHVISION_INCLUDE=/usr/local/include/ffnvcodec # for cuviddec.h and nvcuvid.h -->
+# TODO download the cuviddec.h and nvdec.h header files from the specific version (12.0.1) from https://developer.nvidia.com/video-codec-sdk-archive and move them to /usr/local/cuda/include
 cd vision
+conda activate clean_pytorch_ffmpeg_build
 export TORCH_CUDA_ARCH_LIST="7.0" # NOTE: For V100, it's 7.0. See https://developer.nvidia.com/cuda-gpus
 export TORCHVISION_INCLUDE=/usr/local/include:/usr/local/include/ffnvcodec:/usr/local/cuda/include # for cuviddec.h and nvcuvid.h
-export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu # for libnvcuvid.so
+export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs # for libnvcuvid.so
 export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 python setup.py install
