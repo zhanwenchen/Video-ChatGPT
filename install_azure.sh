@@ -32,7 +32,7 @@ rm cuda-keyring_1.1-1_all.deb
 ```bash
 sudo apt install cuda-toolkit-12-4
 sudo bash -c "echo '/usr/local/cuda/lib64' >> /etc/ld.so.conf"
-sudo vim /etc/environment # on a new line, type LD_LIBRARY_PATH=/usr/local/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+sudo vim /etc/environment # on a new line, type LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 sudo reboot
 ```
 
@@ -67,6 +67,8 @@ cd
 git clone --single-branch --branch n12.0.16.1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git # NOTE: n11.1.5.3 works. n12.0.16.0 works. n12.0.16.1 works. n12.1.14.0 and above do not work.
 cd nv-codec-headers
 sudo make install
+cd
+rm -rf nv-codec-headers
 ```
 
 ## 3.2. Install ffmpeg5 with NVIDIA Video Codec SDK support
@@ -114,9 +116,13 @@ make -j
 sudo make install
 sudo sh -c "echo '/usr/local/lib' >> /etc/ld.so.conf"
 sudo ldconfig
+cd
+rm -rf ffmpeg
 ```
 
 ## 3.3. Confirm your ffmpeg has nvcodec enabled
+
+```bash
 # Examples in https://pytorch.org/audio/stable/build.ffmpeg.html#checking-the-intallation
 ffprobe -hide_banner -decoders | grep h264
 ffmpeg -hide_banner -encoders | grep 264
@@ -131,58 +137,76 @@ ffmpeg -hide_banner -y -vsync 0 \
      -c:v h264_nvenc \
      -b:v 5M test.mp4
 rm test.mp4
+```
 
 ## 4.1 Install Anaconda under ${HOME}. Will not work under a network disk
 
+```bash
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-source .bashrc # Say yes to everything
+bash Miniconda3-latest-Linux-x86_64.sh # Say yes to everything
+source .bashrc
+```
 
 ## 4.2 Build PyTorch from source
 
+```bash
 mv .condarc .condarc-old
 conda create -n clean_pytorch_ffmpeg_build cmake ninja intel::mkl-static intel::mkl-include astunparse "expecttest!=0.2.0" hypothesis numpy psutil pyyaml requests setuptools "typing-extensions>=4.8.0" sympy filelock networkx jinja2 fsspec
+conda activate clean_pytorch_ffmpeg_build
 conda install libgcc-ng=13.1 libstdcxx-ng=13.1 libgcc-ng=13.1 libgomp=13.1 -c defaults -c conda-forge
 conda install -c pytorch magma-cuda124
 pip install types-dataclasses "optree>=0.9.1" lark
+```
+
+```bash
 cd && git clone --recursive --single-branch --branch v2.3.0 https://github.com/pytorch/pytorch.git
-code pytorch
 git submodule sync
 git submodule update --init --recursive
+# TODO: Monkey-patch ${HOME}/pytorch/aten/src/ATen/core/boxing/impl/boxing.h according to <https://github.com/pytorch/pytorch/issues/122169#issuecomment-2146155541>
+```
 
-# Monkey-patch /aten/src/ATen/core/boxing/impl/boxing.h according to <https://github.com/pytorch/pytorch/issues/122169#issuecomment-2146155541>
-
+```bash
 export TORCH_CUDA_ARCH_LIST="7.0" # NOTE: For V100, it's 7.0. See https://developer.nvidia.com/cuda-gpus
 export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+export USE_SYSTEM_NCCL=1
 rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7
+```
 
+```bash
 python setup.py clean && echo "Done Cleaning"
 python setup.py install | tee install_pytorch.log # Wait 10 mins for it to finish.
 echo "DONE building pytorch" && cd # NOTE it's important to move out of the pytorch build directory to import torch.
 ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ${CONDA_PREFIX}/lib/libstdc++.so.6
+```
+
+```bash
 python -c "import torch; print(torch.cuda.is_available()); exit()"
 python
-import torch;
+import torch
 torch.rand(2, 3, device='cuda') @ torch.rand(3, 2, device='cuda') # Check CUDA is working
 torch.svd(torch.rand(3,3, device='cuda')) # Check MAGMA-CUDA is working
 exit() # Get out of the Python shell.
+```
 
+## 4.3 Install torchvision
 
-# Install torchvision
+```bash
 cd && git clone --recursive --single-branch --branch v0.18.0 https://github.com/pytorch/vision.git
-<!-- sudo ln /usr/local/include/ffnvcodec/dynlink_cuviddec.h /usr/local/include/ffnvcodec/cuviddec.h
-sudo ln /usr/local/include/ffnvcodec/dynlink_nvcuvid.h /usr/local/include/ffnvcodec/nvcuvid.h -->
+# <!-- sudo ln /usr/local/include/ffnvcodec/dynlink_cuviddec.h /usr/local/include/ffnvcodec/cuviddec.h
+# sudo ln /usr/local/include/ffnvcodec/dynlink_nvcuvid.h /usr/local/include/ffnvcodec/nvcuvid.h -->
 sudo ln /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so
-<!-- export TORCHVISION_INCLUDE=/usr/local/include/ffnvcodec # for cuviddec.h and nvcuvid.h -->
+# <!-- export TORCHVISION_INCLUDE=/usr/local/include/ffnvcodec # for cuviddec.h and nvcuvid.h -->
+# TORCHVISION_INCLUDE=/usr/local/include/ffnvcodec # for cuviddec.h and nvcuvid.h -->
+cd vision
 export TORCH_CUDA_ARCH_LIST="7.0" # NOTE: For V100, it's 7.0. See https://developer.nvidia.com/cuda-gpus
 export TORCHVISION_INCLUDE=/usr/local/include:/usr/local/include/ffnvcodec:/usr/local/cuda/include # for cuviddec.h and nvcuvid.h
-export TORCHVISION_LIBRARY=/usr/lib/x86_64-linux-gnu # for libnvcuvid.so
+export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu # for libnvcuvid.so
 export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 python setup.py install
-
+```
 
 # Install torchaudio
 
