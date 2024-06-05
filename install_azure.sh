@@ -32,6 +32,8 @@ rm cuda-keyring_1.1-1_all.deb
 ```bash
 sudo apt install cuda-toolkit-12-4
 sudo bash -c "echo '/usr/local/cuda/lib64' >> /etc/ld.so.conf"
+sudo bash -c "echo '/usr/local/cuda/lib64/stubs' >> /etc/ld.so.conf"
+sudo ldconfig
 sudo vim /etc/environment # on a new line, type LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 sudo reboot
 ```
