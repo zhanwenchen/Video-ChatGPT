@@ -84,7 +84,7 @@ sudo apt install yasm libgnutls28-dev libx264-dev
 export MY_SM=70 # NOTE: For V100, it's 70. See https://developer.nvidia.com/cuda-gpus
 ./configure \
   --extra-cflags='-I/usr/local/cuda/include -I/usr/local/include' \
-  --extra-ldflags='-L/usr/local/cuda/lib64' \
+  --extra-ldflags='-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs' \
   --nvccflags="-gencode arch=compute_${MY_SM},code=sm_${MY_SM} -O2" \
   --disable-doc \
   --enable-decoder=aac \
@@ -112,14 +112,13 @@ export MY_SM=70 # NOTE: For V100, it's 70. See https://developer.nvidia.com/cuda
   --enable-cuvid \
   --disable-postproc \
   --enable-shared \
-  --enable-static
+  --disable-static
 make clean
 make -j
 sudo make install
 sudo sh -c "echo '/usr/local/lib' >> /etc/ld.so.conf"
 sudo ldconfig
-cd
-rm -rf ffmpeg
+cd && rm -rf ffmpeg
 ```
 
 ## 3.3. Confirm your ffmpeg has nvcodec enabled
@@ -147,9 +146,23 @@ rm test.mp4
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh # Say yes to everything
 source .bashrc
+rm Miniconda3-latest-Linux-x86_64.sh
+conda update --all
+conda install libgcc-ng=13.1 libstdcxx-ng=13.1 libgcc-ng=13.1 libgomp=13.1 -c defaults -c conda-forge
 ```
 
-## 4.2 Build PyTorch from source
+## 4.2 Install/Update AWS EFA
+
+```bash
+curl -O https://efa-installer.amazonaws.com/aws-efa-installer-1.32.0.tar.gz
+tar -xf aws-efa-installer-1.32.0.tar.gz && cd aws-efa-installer
+sudo ./efa_installer.sh -y
+sudo bash -c "echo 'openmpi5' >> /etc/modules"
+echo 'module load openmpi5' >> ~/.bashrc
+sudo reboot
+```
+
+## 4.3 Build PyTorch from source
 
 ```bash
 mv .condarc .condarc-old
@@ -161,7 +174,7 @@ pip install types-dataclasses "optree>=0.9.1" lark
 ```
 
 ```bash
-cd && git clone --recursive --single-branch --branch v2.3.0 https://github.com/pytorch/pytorch.git
+cd && git clone --recursive --single-branch --branch v2.3.1 https://github.com/pytorch/pytorch.git && cd pytorch
 git submodule sync
 git submodule update --init --recursive
 # TODO: Monkey-patch ${HOME}/pytorch/aten/src/ATen/core/boxing/impl/boxing.h according to <https://github.com/pytorch/pytorch/issues/122169#issuecomment-2146155541>
@@ -173,6 +186,8 @@ export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
 export USE_SYSTEM_NCCL=1
+export NCCL_ROOT=/usr
+export NCCL_INCLUDE_DIR=/usr/include # Also need this for suppressing "COULD NOT FIND NCCL"
 rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7
 ```
 
@@ -180,7 +195,7 @@ rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7
 python setup.py clean && echo "Done Cleaning"
 python setup.py install | tee install_pytorch.log # Wait 10 mins for it to finish.
 echo "DONE building pytorch" && cd # NOTE it's important to move out of the pytorch build directory to import torch.
-ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ${CONDA_PREFIX}/lib/libstdc++.so.6
+ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ${CONDA_PREFIX}/lib/libstdc++.so.6 # Fixes ImportError: ${CONDA_PREFIX}/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by ${CONDA_PREFIX}/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
 ```
 
 ```bash
@@ -190,15 +205,19 @@ import torch
 torch.rand(2, 3, device='cuda') @ torch.rand(3, 2, device='cuda') # Check CUDA is working
 torch.svd(torch.rand(3,3, device='cuda')) # Check MAGMA-CUDA is working
 exit() # Get out of the Python shell.
+python -m torch.utils.collect_env
 ```
 
-## 4.3 Install torchvision
+## 4.4 Install torchvision
 
 ```bash
-cd && git clone --recursive --single-branch --branch v0.18.0 https://github.com/pytorch/vision.git
+cd && git clone --recursive --single-branch --branch v0.18.1 https://github.com/pytorch/vision.git && cd vision
 sudo ln /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so
 # TODO download the cuviddec.h and nvdec.h header files from the specific version (12.0.1) from https://developer.nvidia.com/video-codec-sdk-archive and move them to /usr/local/cuda/include
-cd vision
+scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/Interface/cuviddec.h c3:~ # NOTE: on laptop
+scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/Interface/nvcuvid.h c3:~ # NOTE: on laptop
+sudo mv cuviddec.h /usr/local/cuda/include
+sudo mv nvcuvid.h /usr/local/cuda/include
 conda activate clean_pytorch_ffmpeg_build
 export TORCH_CUDA_ARCH_LIST="7.0" # NOTE: For V100, it's 7.0. See https://developer.nvidia.com/cuda-gpus
 export TORCHVISION_INCLUDE=/usr/local/include:/usr/local/include/ffnvcodec:/usr/local/cuda/include # for cuviddec.h and nvcuvid.h
@@ -206,49 +225,20 @@ export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/local/l
 export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 python setup.py install
+cd && rm -rf vision
 ```
 
-# Install torchaudio
+## 4.5 Install torchaudio
 
-
-# Install project dependencies
-pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
-cmake .. -DUSE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 -DCMAKE_BUILD_TYPE=Release # Change 86 (3090 Ti) to different compute capabillites like before.
-pip install -U tqdm gradio matplotlib sentencepiece protobuf transformers tokenizers huggingface_hub accelerate
-
-pip install .
-
-
-# To run GPT4V
-pip install yacs azure-storage-blob ipywidgets
-
-
-# 3. Install decord
-cd
-git clone --recursive https://github.com/zhanwenchen/decord
-cd decord
-pip install .
-cmake .. -DUSE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=70 -DCMAKE_BUILD_TYPE=Release
-make -j
-
-# Install decord Python bindings
-conda activate vtom
-pip install .
-python setup.py install --user
-# Test decord installation
-cd examples
-# Run all the Jupyter Notebooks under the vtom environment
-# You need to install ALSA (`sudo apt install libasound2-dev` and then `pip install simpleaudio opencv-python-headless`)
-
-Additionally, install [FlashAttention](https://github.com/HazyResearch/flash-attention) for training,
-```shell
-pip install ninja einops
-conda activate vtom
-cd ~/vtom
-
-cd
-git clone --single-branch --branch v2.3.3 git@github.com:Dao-AILab/flash-attention.git
-cd flash-attention
-MAX_JOBS=4 python setup.py install # Cannot use pip install . on this repo. Also need to specify
-conda activate vtom
-cd ~/vtom
+<!-- https://blog.csdn.net/ReadyShowShow/article/details/131572199 -->
+```bash
+cd && git clone --recursive --single-branch --branch v2.3.1 https://github.com/pytorch/audio.git && cd audio
+git submodule sync
+git submodule update --init --recursive
+export USE_CUDA=1
+export USE_FFMPEG=1
+export USE_OPENMP=1
+export FFMPEG_ROOT=/usr/local/
+python setup.py install | tee install_torchaudio.log
+cd && rm -rf audio
+```
