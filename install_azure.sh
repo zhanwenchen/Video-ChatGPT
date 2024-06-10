@@ -32,9 +32,8 @@ rm cuda-keyring_1.1-1_all.deb
 ```bash
 sudo apt install cuda-toolkit-12-4
 sudo bash -c "echo '/usr/local/cuda/lib64' >> /etc/ld.so.conf"
-sudo bash -c "echo '/usr/local/cuda/lib64/stubs' >> /etc/ld.so.conf"
 sudo ldconfig
-sudo vim /etc/environment # on a new line, type LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+sudo vim /etc/environment # on a new line, type LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 sudo reboot
 ```
 
@@ -84,7 +83,7 @@ sudo apt install yasm libgnutls28-dev libx264-dev
 export MY_SM=70 # NOTE: For V100, it's 70. See https://developer.nvidia.com/cuda-gpus
 ./configure \
   --extra-cflags='-I/usr/local/cuda/include -I/usr/local/include' \
-  --extra-ldflags='-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs' \
+  --extra-ldflags='-L/usr/local/cuda/lib64' \
   --nvccflags="-gencode arch=compute_${MY_SM},code=sm_${MY_SM} -O2" \
   --disable-doc \
   --enable-decoder=aac \
@@ -221,7 +220,7 @@ sudo mv nvcuvid.h /usr/local/cuda/include
 conda activate clean_pytorch_ffmpeg_build
 export TORCH_CUDA_ARCH_LIST="7.0" # NOTE: For V100, it's 7.0. See https://developer.nvidia.com/cuda-gpus
 export TORCHVISION_INCLUDE=/usr/local/include:/usr/local/include/ffnvcodec:/usr/local/cuda/include # for cuviddec.h and nvcuvid.h
-export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs # for libnvcuvid.so
+export TORCHVISION_LIBRARY=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64 # for libnvcuvid.so
 export USE_FFMPEG=1
 export _GLIBCXX_USE_CXX11_ABI=1
 python setup.py install
