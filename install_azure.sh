@@ -188,6 +188,7 @@ export USE_SYSTEM_NCCL=1
 export NCCL_ROOT=/usr
 export NCCL_INCLUDE_DIR=/usr/include # Also need this for suppressing "COULD NOT FIND NCCL"
 rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7
+ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ${CONDA_PREFIX}/lib/libstdc++.so.6 # Fixes ImportError: ${CONDA_PREFIX}/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by ${CONDA_PREFIX}/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
 ```
 
 ```bash
