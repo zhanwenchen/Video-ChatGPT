@@ -221,8 +221,7 @@ python -m torch.utils.collect_env
 cd && git clone --recursive --single-branch --branch v0.18.1 https://github.com/pytorch/vision.git && cd vision
 sudo ln /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so
 # TODO download the cuviddec.h and nvdec.h header files from the specific version (12.0.1) from https://developer.nvidia.com/video-codec-sdk-archive and move them to /usr/local/cuda/include
-scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/Interface/cuviddec.h c3:~ # NOTE: on laptop
-scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/Interface/nvcuvid.h c3:~ # NOTE: on laptop
+scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/Interface/{cuviddec.h,nvcuvid.h,nvEncodeAPI.h} my_server:~ # NOTE: on laptop
 sudo mv cuviddec.h /usr/local/cuda/include
 sudo mv nvcuvid.h /usr/local/cuda/include
 conda activate clean_pytorch_ffmpeg_build
