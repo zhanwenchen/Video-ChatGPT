@@ -248,3 +248,177 @@ export FFMPEG_ROOT=/usr/local/
 python setup.py install | tee install_torchaudio.log
 cd && rm -rf audio
 ```
+
+
+# install_env_pllava.md
+
+## 1. Clone base env
+
+```bash
+conda create -n pllava --clone clean_pytorch_ffmpeg_build
+conda activate pllava
+rm ${CONDA_PREFIX}/lib/libffi.7.so ${CONDA_PREFIX}/lib/libffi.so.7 # Fixes ImportError: /lib/x86_64-linux-gnu/libp11-kit.so.0: undefined symbol: ffi_type_pointer, version LIBFFI_BASE_7.0
+ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 ${CONDA_PREFIX}/lib/libstdc++.so.6 # Fixes ImportError: ${CONDA_PREFIX}/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by ${CONDA_PREFIX}/lib/python3.12/site-packages/torch/lib/libtorch_python.so)
+export IMAGEIO_FFMPEG_EXE=ffmpeg
+# export IMAGEIO_FREEIMAGE_LIB=
+
+# ImageIO without ffmpeg binary (use system ffmpeg)
+pip install imageio imageio-ffmpeg --no-binary imageio-ffmpeg
+
+# OpenCV with CUDA support and system ffmpeg
+cd && git clone --recursive https://github.com/opencv/opencv-python.git && cd opencv-python
+git submodule sync
+git submodule update --init --recursive
+sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+    #   if(PYTHONLIBS_FOUND)
+    #     # Copy outputs
+    #     set(_libs_found ${PYTHONLIBS_FOUND})
+    #     set(_libraries ${PYTHON_LIBRARIES})
+    #     set(_include_path ${PYTHON_INCLUDE_PATH})
+    #     set(_include_dirs ${PYTHON_INCLUDE_DIRS})
+    #     set(_debug_libraries ${PYTHON_DEBUG_LIBRARIES})
+    #     set(_libs_version_string ${PYTHONLIBS_VERSION_STRING})
+    #     set(_debug_library ${PYTHON_DEBUG_LIBRARY})
+    #     set(_library ${PYTHON_LIBRARY})
+    #     set(_library_debug ${PYTHON_LIBRARY_DEBUG})
+    #     set(_library_release ${PYTHON_LIBRARY_RELEASE})
+    #     set(_include_dir ${PYTHON_INCLUDE_DIR})
+    #     set(_include_dir2 ${PYTHON_INCLUDE_DIR2})
+
+export CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RELEASE
+    -DWITH_CUBLAS=1
+    -DWITH_CUDA=ON
+    -DWITH_NVCUVID=ON
+    -DWITH_CUDNN=ON
+    -DOPENCV_DNN_CUDA=ON
+    -DCMAKE_CUDA_ARCHITECTURES=70
+    -DOPENCV_ENABLE_NONFREE=ON
+    -DENABLE_FAST_MATH=1
+    -DCUDA_FAST_MATH=1
+    -DOPENCV_EXTRA_MODULES_PATH=${HOME}/opencv-python/opencv_contrib/modules
+    -DCUDA_CUDA_LIBRARY=/lib/x86_64-linux-gnu/libcuda.so
+    -DCUDA_nvidia-encode_LIBRARY=/usr/local/cuda-12.4/targets/x86_64-linux/lib/libnvidia-encode.so
+    -DPYTHON3_LIBRARIES=${CONDA_PREFIX}/lib
+    -DPYTHON3_LIBRARY=${CONDA_PREFIX}/lib
+    -DPYTHON3_INCLUDE_DIR=${CONDA_PREFIX}/include/python3.12
+    -DPYTHON3_INCLUDE_DIRS=${CONDA_PREFIX}/include/python3.12
+    -DPYTHON_DEFAULT_EXECUTABLE=${CONDA_PREFIX}/bin/python
+    -DPYTHON3_EXECUTABLE=${CONDA_PREFIX}/bin/python
+    -DPYTHON3_PACKAGES_PATH=${CONDA_PREFIX}/lib/python3.12/site-packages
+    -DPYTHON3_LIMITED_API=OFF
+    -DPYTHON3_NUMPY_INCLUDE_DIRS=${CONDA_PREFIX}/lib/python3.12/site-packages/numpy/core/include/numpy
+    -DBUILD_PYTHON_SUPPORT=ON \
+    -DBUILD_NEW_PYTHON_SUPPORT=ON \
+    -DOPENCV_PYTHON3_INSTALL_PATH=${CONDA_PREFIX}/lib/python3.12/site-packages \
+    -DPython_NumPy_INCLUDE_DIRS=${CONDA_PREFIX}/lib/python3.12/site-packages/numpy/core/include/numpy
+    -DWITH_GSTREAMER=ON"
+export CMAKE_ARGS='-DCMAKE_VERBOSE_MAKEFILE=ON'
+export VERBOSE=1
+# ENABLE_LIBJPEG_TURBO_SIMD
+# MKL_WITH_OPENMP
+export ENABLE_HEADLESS=1
+export ENABLE_CONTRIB=1
+sudo ln -s ${CONDA_PREFIX}/lib/python3.12/site-packages/numpy/core/include/numpy /usr/include/numpy
+scp ${HOME}/Downloads/Video_Codec_SDK_12.0.16/{Interface/nvEncodeAPI.h,Lib/linux/stubs/x86_64/libnvcuvid.so,Lib/linux/stubs/x86_64/libnvidia-encode.so} c1:~ # NOTE: on laptop
+sudo mv ~/nvEncodeAPI.h /usr/local/cuda/include
+sudo mv ~/{libnvcuvid.so,libnvidia-encode.so} /usr/local/cuda/lib64
+# TODO: remove the version number for setuptools in pyproject.toml
+pip wheel . --verbose |& tee install_opencv.log
+pip install opencv_contrib_python_headless-*.whl
+ldd -r ${CONDA_PREFIX}/lib/python3.12/site-packages/cv2/cv2.abi3.so # Check to see symbols are defined
+# pip uninstall opencv_contrib_python_headless
+
+# PyAV without FFMPEG binary (use system ffmpeg)
+pip install av --no-binary av
+
+pip install transformers accelerate safetensors peft huggingface_hub
+# is imageio already installed?
+pip install einops gradio moviepy # For eval
+pip install wandb termcolor # Training
+pip install -U anthropic[bedrock]
+
+# Install decord
+
+cd && git clone --recursive https://github.com/zhanwenchen/decord && cd decord
+git submodule sync
+git submodule update --init --recursive
+mkdir build && cd build
+
+# Specifying these paths helps avoid stubs
+cmake .. \
+    -DUSE_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES=70 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCUDA_CUDA_LIBRARY=/lib/x86_64-linux-gnu/libcuda.so \
+    -DCUDA_CUDART_LIBRARY=/usr/local/cuda/targets/x86_64-linux/lib/libcudart.so \
+    -DCUDA_NVRTC_LIBRARY=/usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so \
+    -DCUDA_CUDNN_LIBRARY=/lib/x86_64-linux-gnu/libcudnn.so \
+    -DCUDA_CUBLAS_LIBRARY=/usr/local/cuda/targets/x86_64-linux/lib/libcublas.so \
+    -DCUDA_NVIDIA_ML_LIBRARY=/lib/x86_64-linux-gnu/libnvidia-ml.so \
+    -DCUDA_NVCUVID_LIBRARY=/lib/x86_64-linux-gnu/libnvcuvid.so
+
+make -j
+
+cd ../python
+pip install .
+
+
+## flash-attn
+
+cd && git clone --single-branch --branch v2.5.9.post1 https://github.com/Dao-AILab/flash-attention.git && cd flash-attention
+python setup.py install # Cannot use pip install . on this repo. Also need to specify
+
+```
+
+## Download models
+
+```bash
+python python_scripts/hf.py
+
+# curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
+# sudo apt install git-lfs
+# git lfs install
+# git clone https://huggingface.co/ermu2001/pllava-7b # No need - can def
+```
+
+
+## Download data
+
+```bash
+# VideoChat
+mkdir -p DATAS/TRAIN_TEST
+
+wget https://pjlab-gvm-data.oss-cn-shanghai.aliyuncs.com/videochat2/data/videochat2_conversation_videos.zip
+tar -xvf videochat2_conversation_videos.zip
+
+# Video-ChatGPT instruction (removed)
+gdown https://drive.google.com/file/d/1Wb0vYuavCoBYos6LXjY5CKfQjU6UqlIi/view?usp=drive_link --fuzzy
+
+
+```
+
+## Run Demo
+
+```bash
+bash scripts/demo.sh
+```
+
+## Run Eval
+
+```bash
+bash scripts/eval.sh
+```
+
+## Run Training
+
+```bash
+bash scripts/train_pllava_7b.sh | tee train_pllava_7b.log
+```
+
+
+
+# reinstall efa
+
+```bash
+sudo apt remove ibacm ibverbs-providers ibverbs-utils infiniband-diags libibmad-dev libibmad5 libibumad-dev libibumad3 libibverbs1 rdma-core
+```
