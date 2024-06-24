@@ -60,6 +60,12 @@ sudo apt install libxnvctrl0=550.* nvidia-settings=550.* # Miscellaneous NVIDIA 
 sudo apt install nvidia-container-toolkit # 2.5 (Optional) NVIDIA Docker
 ```
 
+### 2.5 Start NVIDIA Fabric Manager service
+```bash
+sudo systemctl enable nvidia-fabricmanager.service
+sudo systemctl start nvidia-fabricmanager.service
+```
+
 ## 2.5 apt clean up
 
 ```bash
